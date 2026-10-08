@@ -2,6 +2,8 @@
 // Run `gh` with a GitHub App installation token in GH_TOKEN.
 // Usage: gh-app [--profile NAME] setup --app-id ID --installation-id ID --private-key-path FILE   (stores in macOS Keychain)
 //        gh-app [--profile NAME] <gh args...>   e.g. gh-app --profile work pr list -R org/repo
+//        gh-app [--profile NAME] token          print the token (for curl, scripts, ...)
+//        gh-app [--profile NAME] credential get git credential helper (see README)
 // Profile defaults to $GH_APP_PROFILE, then "default".
 import { createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -37,8 +39,17 @@ export function createJwt(
   return `${body}.${createSign("RSA-SHA256").update(body).sign(privateKey, "base64url")}`;
 }
 
+// 5 minutes of headroom so long-running commands (e.g. `gh run watch`) don't outlive the token.
 export const isFresh = (c: Cached | undefined, now = Date.now()) =>
-  !!c && Date.parse(c.expires_at) - now > 60_000;
+  !!c && Date.parse(c.expires_at) - now > 5 * 60_000;
+
+// git credential protocol: key=value lines on stdin. Only answer for https://github.com.
+export function isGitHubHttps(request: string): boolean {
+  const fields = Object.fromEntries(
+    request.split("\n").map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+  );
+  return fields.protocol === "https" && fields.host === "github.com";
+}
 
 async function fetchToken({ appId, installationId, privateKey }: Config): Promise<Cached> {
   const res = await fetch(
@@ -100,6 +111,14 @@ if (import.meta.main) {
   try {
     if (!profile) throw new Error("--profile requires a name");
     if (args[0] === "setup") process.exit((await setup(profile, args.slice(1)), 0));
+    if (args[0] === "token") process.exit((console.log(await getToken(profile)), 0));
+    if (args[0] === "credential") {
+      // store/erase are no-ops; the token lives in Keychain already.
+      if (args[1] === "get" && isGitHubHttps(await Bun.stdin.text())) {
+        console.log(`username=x-access-token\npassword=${await getToken(profile)}`);
+      }
+      process.exit(0);
+    }
     token = await getToken(profile);
   } catch (e) {
     console.error(`gh-app: ${(e as Error).message}`);

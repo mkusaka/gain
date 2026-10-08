@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { generateKeyPairSync, verify } from "node:crypto";
-import { createJwt, isFresh } from "./gh-app.ts";
+import { createJwt, isFresh, isGitHubHttps } from "./gh-app.ts";
 
 test("createJwt signs a PKCS#1 key with valid claims", () => {
   // GitHub hands out PKCS#1 PEMs.
@@ -20,9 +20,16 @@ test("createJwt signs a PKCS#1 key with valid claims", () => {
   });
 });
 
-test("isFresh requires more than a minute of validity", () => {
+test("isFresh requires more than five minutes of validity", () => {
   const now = Date.parse("2026-01-01T00:00:00Z");
-  expect(isFresh({ token: "t", expires_at: "2026-01-01T00:05:00Z" }, now)).toBe(true);
-  expect(isFresh({ token: "t", expires_at: "2026-01-01T00:00:30Z" }, now)).toBe(false);
+  expect(isFresh({ token: "t", expires_at: "2026-01-01T00:10:00Z" }, now)).toBe(true);
+  expect(isFresh({ token: "t", expires_at: "2026-01-01T00:04:00Z" }, now)).toBe(false);
   expect(isFresh(undefined, now)).toBe(false);
+});
+
+test("isGitHubHttps only matches https://github.com", () => {
+  expect(isGitHubHttps("protocol=https\nhost=github.com\npath=org/repo.git\n")).toBe(true);
+  expect(isGitHubHttps("protocol=http\nhost=github.com\n")).toBe(false);
+  expect(isGitHubHttps("protocol=https\nhost=github.com.evil.example\n")).toBe(false);
+  expect(isGitHubHttps("protocol=https\nhost=gitlab.com\n")).toBe(false);
 });
