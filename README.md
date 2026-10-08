@@ -2,28 +2,32 @@
 
 `@mkusaka/gain`: run `gh` with a GitHub App installation token. One dependency-free TypeScript file for Node (>= 24.2) or [Bun](https://bun.sh); requires `gh` and macOS.
 
-The App ID, Installation ID, private key and the cached token (reused until 5 minutes before expiry) are stored in the macOS Keychain under service `gain` (items `config:<profile>` and `token:<profile>`). No files or env vars; existing `gh` / git config is not touched. Values are written through the `security` CLI's stdin, so secrets never appear in process arguments.
+The Client ID, Installation ID, private key and the cached token (reused until 5 minutes before expiry) are stored in the macOS Keychain under service `gain` (items `config:<profile>` and `token:<profile>`). No files or env vars; existing `gh` / git config is not touched. Values are written through the `security` CLI's stdin, so secrets never appear in process arguments.
 
 ## Setup
 
 ```sh
 npm install -g @mkusaka/gain   # or from a clone: npm link (builds dist/ via prepare)
-gain setup --app-id 123456 --installation-id 7890123 --private-key-path /path/to/app.private-key.pem   # verifies by issuing a token, then saves
+gain setup --client-id Iv23liXXXXXXXXXXXXXX --installation-id 7890123 --private-key-path /path/to/app.private-key.pem   # verifies by issuing a token, then saves
 rm /path/to/app.private-key.pem   # optional: the key now lives in Keychain
 ```
 
+`--client-id` is the App's Client ID (`Iv23li...`, shown on the App settings page), which GitHub recommends as the JWT issuer; the numeric App ID also works. The Installation ID is the number at the end of `github.com/organizations/<org>/settings/installations/<id>`.
+
 Grant the App only the permissions you need (e.g. Contents: read, Metadata: read). Note that `gh pr list` silently returns nothing without **Issues: read**. After changing the App's permissions, run `setup` again: it also replaces the cached token, which otherwise keeps the old permissions until it expires.
 
-Run `setup` again to change settings; `security delete-generic-password -s gain -a config:default` (and `-a token:default`) to remove them. Only GitHub's standard 2048-bit App keys fit the Keychain write path; larger keys are rejected.
+Run `setup` again to change settings. Only GitHub's standard 2048-bit App keys fit the Keychain write path; larger keys are rejected.
 
 ## Profiles (multiple Apps)
 
 The profile is `--profile NAME` (must be the first argument), else `$GH_APP_PROFILE`, else `default`. Names are limited to `[A-Za-z0-9_.-]`.
 
 ```sh
-gain --profile work setup --app-id 111 --installation-id 222 --private-key-path work.pem
+gain --profile work setup --client-id Iv23liYYYYYYYYYYYYYY --installation-id 222 --private-key-path work.pem
 gain --profile work pr list -R work-org/repo
 GH_APP_PROFILE=work gain pr list -R work-org/repo   # e.g. via direnv per directory
+gain profile list                                  # configured profiles
+gain profile remove work                           # delete its config and cached token from Keychain
 ```
 
 ## Usage

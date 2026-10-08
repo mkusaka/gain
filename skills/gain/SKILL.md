@@ -14,17 +14,18 @@ gain pr list -R org/repo                    # any gh subcommand
 gain api repos/org/repo/contents/README.md  # REST via gh api
 gain --profile work issue view 123 -R org/repo
 GH_APP_PROFILE=work gain pr view 45 -R org/repo
+gain profile list                           # which profiles exist
 gain token                                  # raw token, only for non-gh tools (see below)
 ```
 
 - Use `gain <gh args>` wherever you would run `gh <gh args>` for the App. Keep plain `gh` for actions that must be done as the user.
-- `--profile NAME` must be the very first argument. Without it, `$GH_APP_PROFILE` or `default` is used. Ask the user which profile to use if it isn't clear from context.
+- `--profile NAME` must be the very first argument. Without it, `$GH_APP_PROFILE` or `default` is used. Run `gain profile list` to see the options; ask the user which one to use if it isn't clear from context.
 - Always pass `-R owner/repo` (or run inside the repo checkout). The token is scoped to the repos where the App is installed.
 
 ## Rules
 
 - Never print, log, or paste the token. Don't run bare `gain token` in a way that shows its output; only use it inline, e.g. `curl -H "Authorization: Bearer $(gain token)" ...`. Prefer `gain api ...` over curl.
-- Don't run `gain setup` yourself or touch the private key; setup is the user's job. If you see `profile "..." not configured`, tell the user to run `gain [--profile NAME] setup --app-id ID --installation-id ID --private-key-path FILE`.
+- Don't run `gain setup` or `gain profile remove` yourself or touch the private key; setup is the user's job. If you see `profile "..." not configured`, tell the user to run `gain [--profile NAME] setup --client-id ID --installation-id ID --private-key-path FILE`.
 - Don't change git config. If a git clone/fetch needs the App, point the user to the README's credential helper section.
 
 ## Troubleshooting
@@ -32,7 +33,7 @@ gain token                                  # raw token, only for non-gh tools (
 | Symptom                                        | Cause / action                                                                                    |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `profile "x" not configured`                   | Ask the user to run `setup` for that profile.                                                     |
-| `token request failed: 401/404`                | Wrong App ID / Installation ID or revoked key. Ask the user to re-run `setup`.                    |
+| `token request failed: 401/404`                | Wrong Client ID / Installation ID or revoked key. Ask the user to re-run `setup`.                 |
 | `gh pr list` returns nothing                   | The App lacks **Issues: read**. Report it; don't assume the repo has no PRs.                      |
 | `Resource not accessible by integration` (403) | The App lacks that permission or isn't installed on the repo. Report which permission is missing. |
 | New permissions not taking effect              | The cached token predates the change. Ask the user to re-run `setup`.                             |
