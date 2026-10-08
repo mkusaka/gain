@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "ghapins",
+      "name": "@mkusaka/gain",
       "devDependencies": {
         "oxfmt": "0.72.0",
         "oxlint": "1.87.0",

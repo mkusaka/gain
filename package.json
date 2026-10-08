@@ -1,15 +1,32 @@
 {
-  "name": "ghapins",
-  "private": true,
+  "name": "@mkusaka/gain",
+  "version": "0.1.0",
+  "description": "Run gh with a GitHub App installation token, with keys and tokens in macOS Keychain.",
+  "license": "MIT",
+  "repository": "github:mkusaka/ghapins",
+  "bin": {
+    "gain": "dist/gain.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "os": [
+    "darwin"
+  ],
   "type": "module",
   "scripts": {
+    "build": "node -e \"const fs = require('node:fs'); fs.mkdirSync('dist', { recursive: true }); fs.writeFileSync('dist/gain.js', require('node:module').stripTypeScriptTypes(fs.readFileSync('gain.ts', 'utf8')))\"",
+    "prepare": "npm run build",
     "lint": "oxlint",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "test": "bun test"
+    "test": "node --test"
   },
   "devDependencies": {
     "oxfmt": "0.72.0",
     "oxlint": "1.87.0"
+  },
+  "engines": {
+    "node": ">=24.2"
   }
 }
