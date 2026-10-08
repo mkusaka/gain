@@ -25,7 +25,7 @@ gain token                                  # raw token, only for non-gh tools (
 ## Rules
 
 - Never print, log, or paste the token. Don't run bare `gain token` in a way that shows its output; only use it inline, e.g. `curl -H "Authorization: Bearer $(gain token)" ...`. Prefer `gain api ...` over curl.
-- Don't run `gain setup` or `gain profile remove` yourself or touch the private key; setup is the user's job. If you see `profile "..." not configured`, tell the user to run `gain [--profile NAME] setup --client-id ID --installation-id ID --private-key-path FILE`.
+- Don't run `gain setup` or `gain profile remove` yourself or touch the private key; setup is the user's job. If you see `profile "..." not configured`, tell the user to run `gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE`.
 - Don't change git config. If a git clone/fetch needs the App, point the user to the README's credential helper section.
 
 ## Troubleshooting

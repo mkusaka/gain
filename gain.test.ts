@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
 import { test } from "node:test";
-import { createJwt, isFresh, isGitHubHttps, listProfiles } from "./gain.ts";
+import { createJwt, isFresh, isGitHubHttps, listProfiles, pickInstallation } from "./gain.ts";
 
 test("createJwt signs a PKCS#1 key with valid claims", () => {
   // GitHub hands out PKCS#1 PEMs.
@@ -45,4 +45,11 @@ test("listProfiles picks config items of the gain service only", () => {
     item("other", "config:nope"),
   ].join("");
   assert.deepEqual(listProfiles(dump), ["default", "work"]);
+});
+
+test("pickInstallation uses the only installation, otherwise asks", () => {
+  const inst = (id: number, login: string) => ({ id, account: { login } });
+  assert.equal(pickInstallation([inst(42, "org")]), "42");
+  assert.throws(() => pickInstallation([]), /not installed/);
+  assert.throws(() => pickInstallation([inst(1, "a"), inst(2, "b")]), /1 \(a\), 2 \(b\)/);
 });

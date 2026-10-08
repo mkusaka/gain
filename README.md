@@ -8,11 +8,11 @@ The Client ID, Installation ID, private key and the cached token (reused until 5
 
 ```sh
 npm install -g @mkusaka/gain   # or from a clone: npm link (builds dist/ via prepare)
-gain setup --client-id Iv23liXXXXXXXXXXXXXX --installation-id 7890123 --private-key-path /path/to/app.private-key.pem   # verifies by issuing a token, then saves
+gain setup --client-id Iv23liXXXXXXXXXXXXXX --private-key-path /path/to/app.private-key.pem   # verifies by issuing a token, then saves
 rm /path/to/app.private-key.pem   # optional: the key now lives in Keychain
 ```
 
-`--client-id` is the App's Client ID (`Iv23li...`, shown on the App settings page), which GitHub recommends as the JWT issuer; the numeric App ID also works. The Installation ID is the number at the end of `github.com/organizations/<org>/settings/installations/<id>`.
+`--client-id` is the App's Client ID (`Iv23li...`, shown on the App settings page), which GitHub recommends as the JWT issuer; the numeric App ID also works. The Installation ID is looked up automatically when the App is installed on exactly one account; otherwise `setup` lists them and you pass `--installation-id` (also the number at the end of `github.com/organizations/<org>/settings/installations/<id>`).
 
 Grant the App only the permissions you need (e.g. Contents: read, Metadata: read). Note that `gh pr list` silently returns nothing without **Issues: read**. After changing the App's permissions, run `setup` again: it also replaces the cached token, which otherwise keeps the old permissions until it expires.
 
@@ -23,7 +23,7 @@ Run `setup` again to change settings. Only GitHub's standard 2048-bit App keys f
 The profile is `--profile NAME` (must be the first argument), else `$GH_APP_PROFILE`, else `default`. Names are limited to `[A-Za-z0-9_.-]`.
 
 ```sh
-gain --profile work setup --client-id Iv23liYYYYYYYYYYYYYY --installation-id 222 --private-key-path work.pem
+gain --profile work setup --client-id Iv23liYYYYYYYYYYYYYY --private-key-path work.pem
 gain --profile work pr list -R work-org/repo
 GH_APP_PROFILE=work gain pr list -R work-org/repo   # e.g. via direnv per directory
 gain profile list                                  # configured profiles

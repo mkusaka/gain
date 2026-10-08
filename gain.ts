@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Run `gh` with a GitHub App installation token in GH_TOKEN. Runs on Node (>=24.2) or Bun, macOS only.
-// Usage: gain [--profile NAME] setup --client-id ID --installation-id ID --private-key-path FILE   (stores in macOS Keychain)
+// Usage: gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE   (stores in macOS Keychain)
 //        gain [--profile NAME] <gh args...>   e.g. gain --profile work pr list -R org/repo
 //        gain [--profile NAME] token          print the token (for curl, scripts, ...)
 //        gain [--profile NAME] credential get git credential helper (see README)
@@ -17,7 +17,7 @@ type Cached = { token: string; expires_at: string };
 
 const SERVICE = "gain";
 const SETUP_USAGE =
-  "gain [--profile NAME] setup --client-id ID --installation-id ID --private-key-path FILE";
+  "gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE";
 
 // macOS Keychain via the `security` CLI. Values are written through stdin (`security -i`) so
 // secrets never appear in argv / `ps`, base64-encoded so they need no quoting.
@@ -92,18 +92,39 @@ export function isGitHubHttps(request: string): boolean {
   return fields.protocol === "https" && fields.host === "github.com";
 }
 
-async function fetchToken({ clientId, installationId, privateKey }: Config): Promise<Cached> {
-  const res = await fetch(
-    `https://api.github.com/app/installations/${installationId}/access_tokens`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${createJwt(clientId, privateKey)}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "gain",
-      },
+// Authenticated as the App itself (JWT), not an installation.
+const appFetch = (path: string, clientId: string, privateKey: string, method = "GET") =>
+  fetch(`https://api.github.com${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${createJwt(clientId, privateKey)}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "gain",
     },
+  });
+
+type Installation = { id: number; account: { login: string } };
+
+export function pickInstallation(installations: Installation[]): string {
+  if (installations.length === 1) return String(installations[0].id);
+  if (!installations.length) throw new Error("the App is not installed anywhere; install it first");
+  const list = installations.map((i) => `${i.id} (${i.account.login})`).join(", ");
+  throw new Error(`the App has several installations; pass --installation-id: ${list}`);
+}
+
+async function findInstallationId(clientId: string, privateKey: string): Promise<string> {
+  const res = await appFetch("/app/installations?per_page=100", clientId, privateKey);
+  if (!res.ok) throw new Error(`installation lookup failed: ${res.status} ${await res.text()}`);
+  return pickInstallation((await res.json()) as Installation[]);
+}
+
+async function fetchToken({ clientId, installationId, privateKey }: Config): Promise<Cached> {
+  const res = await appFetch(
+    `/app/installations/${installationId}/access_tokens`,
+    clientId,
+    privateKey,
+    "POST",
   );
   if (!res.ok) throw new Error(`token request failed: ${res.status} ${await res.text()}`);
   const { token, expires_at } = (await res.json()) as Cached;
@@ -134,13 +155,18 @@ async function setup(profile: string, args: string[]) {
     "installation-id": installationId,
     "private-key-path": keyPath,
   } = values;
-  if (!clientId || !installationId || !keyPath) throw new Error(`usage: ${SETUP_USAGE}`);
-  const config = { clientId, installationId, privateKey: readFileSync(keyPath, "utf8") };
+  if (!clientId || !keyPath) throw new Error(`usage: ${SETUP_USAGE}`);
+  const privateKey = readFileSync(keyPath, "utf8");
+  const config = {
+    clientId,
+    installationId: installationId ?? (await findInstallationId(clientId, privateKey)),
+    privateKey,
+  };
   const token = await fetchToken(config); // verify before saving
   secret.set(`config:${profile}`, config);
   secret.set(`token:${profile}`, token);
   console.error(
-    `gain: saved profile "${profile}" to Keychain (service "${SERVICE}"). You can now delete ${keyPath}.`,
+    `gain: saved profile "${profile}" (installation ${config.installationId}) to Keychain (service "${SERVICE}"). You can now delete ${keyPath}.`,
   );
 }
 
