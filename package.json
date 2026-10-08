@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "description": "Run gh with a GitHub App installation token, with keys and tokens in macOS Keychain.",
   "license": "MIT",
-  "repository": "github:mkusaka/gain",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mkusaka/gain.git"
+  },
   "bin": {
     "gain": "dist/gain.js"
   },
