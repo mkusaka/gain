@@ -1,6 +1,6 @@
 {
   "name": "@mkusaka/gain",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Run gh with a GitHub App installation token, with keys and tokens in macOS Keychain.",
   "license": "MIT",
   "repository": {
