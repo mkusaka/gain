@@ -3,6 +3,7 @@
 // Usage: gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE   (stores in macOS Keychain)
 //        gain [--profile NAME] <gh args...>   e.g. gain --profile work pr list -R org/repo
 //        gain [--profile NAME] token [--min-ttl MINUTES]   print the token (for curl, scripts, ...)
+//        gain [--profile NAME] revoke         revoke the cached token (e.g. after it leaked)
 //        gain [--profile NAME] credential get git credential helper (see README)
 //        gain profile list | gain profile remove NAME
 // Profile defaults to $GH_APP_PROFILE, then "default".
@@ -145,6 +146,28 @@ async function getToken(profile: string, minTtl?: number): Promise<string> {
   return fresh.token;
 }
 
+// Tokens already handed out earlier stay valid until they expire; this only revokes the cached one.
+async function revokeToken(profile: string): Promise<string> {
+  const cached = secret.get<Cached>(`token:${profile}`);
+  if (!cached) return "no cached token";
+  if (isFresh(cached, 0)) {
+    const res = await fetch("https://api.github.com/installation/token", {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${cached.token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "gain",
+      },
+    });
+    // 401: already revoked or expired.
+    if (!res.ok && res.status !== 401)
+      throw new Error(`revoke failed: ${res.status} ${await res.text()}`);
+  }
+  secret.delete(`token:${profile}`);
+  return "revoked the cached token";
+}
+
 async function setup(
   profile: string,
   {
@@ -205,6 +228,7 @@ export const parser = withDefault(
             minTtl: withDefault(option("--min-ttl", integer({ min: 0, max: 60 })), 5),
           }),
         ),
+        command("revoke", object({ action: constant("revoke") })),
         command(
           "credential",
           object({
@@ -247,6 +271,8 @@ if (import.meta.main) {
     const profile = checkProfileName(parsed.profile);
     if (cmd.action === "setup") process.exit((await setup(profile, cmd), 0));
     if (cmd.action === "token") process.exit((console.log(await getToken(profile, cmd.minTtl)), 0));
+    if (cmd.action === "revoke")
+      process.exit((console.error(`gain: ${await revokeToken(profile)}`), 0));
     if (cmd.action === "credential") {
       // store/erase are no-ops; the token lives in Keychain already.
       if (cmd.op === "get" && isGitHubHttps(readFileSync(0, "utf8"))) {

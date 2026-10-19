@@ -81,4 +81,5 @@ test("parser passes non-gain args to gh untouched and bounds --min-ttl", () => {
   });
   assert.equal(value(["token", "--min-ttl", "61"]), undefined);
   assert.deepEqual(value(["profile", "remove", "w"]), { action: "profile remove", name: "w" });
+  assert.deepEqual(value(["revoke"]), { profile: "default", cmd: { action: "revoke" } });
 });

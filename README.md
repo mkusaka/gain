@@ -40,6 +40,8 @@ curl -H "Authorization: Bearer $(gain token)" https://api.github.com/repos/org/p
 
 A token stays fixed for the life of the process it was handed to, and GitHub App tokens expire after 60 minutes. `gain token --min-ttl MINUTES` (0-60, default 5) issues a new token unless the cached one has more than that left, e.g. `--min-ttl 30` before a long `gh run watch`.
 
+If a token leaks, `gain revoke` revokes the cached token and drops it from Keychain; the next call issues a new one. Tokens handed out before that one stay valid until they expire.
+
 ### git (optional)
 
 `gain credential` is a git credential helper (answers only for `https://github.com`). Scope it to one org so the rest of your git auth is untouched; the empty `helper` clears helpers configured earlier (e.g. osxkeychain) for that URL only:
