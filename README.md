@@ -1,6 +1,6 @@
 # gain
 
-`@mkusaka/gain`: run `gh` with a GitHub App installation token. One dependency-free TypeScript file for Node (>= 24.2) or [Bun](https://bun.sh); requires `gh` and macOS.
+`@mkusaka/gain`: run `gh` with a GitHub App installation token. One TypeScript file (argument parsing by [Optique](https://optique.dev)) for Node (>= 24.2) or [Bun](https://bun.sh); requires `gh` and macOS.
 
 The Client ID, Installation ID, private key and the cached token (reused until 5 minutes before expiry) are stored in the macOS Keychain under service `gain` (items `config:<profile>` and `token:<profile>`). No files or env vars; existing `gh` / git config is not touched. Values are written through the `security` CLI's stdin, so secrets never appear in process arguments.
 
@@ -37,6 +37,8 @@ gain pr list -R org/private-repo
 gain api repos/org/private-repo
 curl -H "Authorization: Bearer $(gain token)" https://api.github.com/repos/org/private-repo
 ```
+
+A token stays fixed for the life of the process it was handed to, and GitHub App tokens expire after 60 minutes. `gain token --min-ttl MINUTES` (0-60, default 5) issues a new token unless the cached one has more than that left, e.g. `--min-ttl 30` before a long `gh run watch`.
 
 ### git (optional)
 

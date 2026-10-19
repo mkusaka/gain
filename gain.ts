@@ -2,7 +2,7 @@
 // Run `gh` with a GitHub App installation token in GH_TOKEN. Runs on Node (>=24.2) or Bun, macOS only.
 // Usage: gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE   (stores in macOS Keychain)
 //        gain [--profile NAME] <gh args...>   e.g. gain --profile work pr list -R org/repo
-//        gain [--profile NAME] token          print the token (for curl, scripts, ...)
+//        gain [--profile NAME] token [--min-ttl MINUTES]   print the token (for curl, scripts, ...)
 //        gain [--profile NAME] credential get git credential helper (see README)
 //        gain profile list | gain profile remove NAME
 // Profile defaults to $GH_APP_PROFILE, then "default".
@@ -10,7 +10,11 @@ import { spawnSync } from "node:child_process";
 import { createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { constants } from "node:os";
-import { parseArgs } from "node:util";
+import { object, or } from "@optique/core/constructs";
+import { optional, withDefault } from "@optique/core/modifiers";
+import { argument, command, constant, option, passThrough } from "@optique/core/primitives";
+import { choice, integer, string } from "@optique/core/valueparser";
+import { run } from "@optique/run";
 
 type Config = { clientId: string; installationId: string; privateKey: string };
 type Cached = { token: string; expires_at: string };
@@ -80,9 +84,9 @@ export function createJwt(
   return `${body}.${createSign("RSA-SHA256").update(body).sign(privateKey, "base64url")}`;
 }
 
-// 5 minutes of headroom so long-running commands (e.g. `gh run watch`) don't outlive the token.
-export const isFresh = (c: Cached | undefined, now = Date.now()) =>
-  !!c && Date.parse(c.expires_at) - now > 5 * 60_000;
+// Minutes of headroom so long-running commands (e.g. `gh run watch`) don't outlive the token.
+export const isFresh = (c: Cached | undefined, minTtl = 5, now = Date.now()) =>
+  !!c && Date.parse(c.expires_at) - now > minTtl * 60_000;
 
 // git credential protocol: key=value lines on stdin. Only answer for https://github.com.
 export function isGitHubHttps(request: string): boolean {
@@ -131,9 +135,9 @@ async function fetchToken({ clientId, installationId, privateKey }: Config): Pro
   return { token, expires_at };
 }
 
-async function getToken(profile: string): Promise<string> {
+async function getToken(profile: string, minTtl?: number): Promise<string> {
   const cached = secret.get<Cached>(`token:${profile}`);
-  if (isFresh(cached)) return cached!.token;
+  if (isFresh(cached, minTtl)) return cached!.token;
   const config = secret.get<Config>(`config:${profile}`);
   if (!config) throw new Error(`profile "${profile}" not configured; run: ${SETUP_USAGE}`);
   const fresh = await fetchToken(config);
@@ -141,21 +145,14 @@ async function getToken(profile: string): Promise<string> {
   return fresh.token;
 }
 
-async function setup(profile: string, args: string[]) {
-  const { values } = parseArgs({
-    args,
-    options: {
-      "client-id": { type: "string" },
-      "installation-id": { type: "string" },
-      "private-key-path": { type: "string" },
-    },
-  });
-  const {
-    "client-id": clientId,
-    "installation-id": installationId,
-    "private-key-path": keyPath,
-  } = values;
-  if (!clientId || !keyPath) throw new Error(`usage: ${SETUP_USAGE}`);
+async function setup(
+  profile: string,
+  {
+    clientId,
+    installationId,
+    keyPath,
+  }: { clientId: string; installationId?: string; keyPath: string },
+) {
   const privateKey = readFileSync(keyPath, "utf8");
   const config = {
     clientId,
@@ -170,39 +167,94 @@ async function setup(profile: string, args: string[]) {
   );
 }
 
+const defaultProfile = () => process.env.GH_APP_PROFILE || "default";
+
+// Anything that isn't a gain command goes to gh untouched, so gain has no --help/--version of its own.
+export const parser = withDefault(
+  or(
+    command(
+      "profile",
+      or(
+        command("list", object({ action: constant("profile list") })),
+        command(
+          "remove",
+          object({
+            action: constant("profile remove"),
+            name: argument(string({ metavar: "NAME" })),
+          }),
+        ),
+      ),
+    ),
+    object({
+      profile: withDefault(option("--profile", string({ metavar: "NAME" })), defaultProfile),
+      cmd: or(
+        command(
+          "setup",
+          object({
+            action: constant("setup"),
+            clientId: option("--client-id", string({ metavar: "ID" })),
+            installationId: optional(option("--installation-id", string({ metavar: "ID" }))),
+            keyPath: option("--private-key-path", string({ metavar: "FILE" })),
+          }),
+        ),
+        command(
+          "token",
+          object({
+            action: constant("token"),
+            // Installation tokens live 60 minutes, so more headroom than that can never be met.
+            minTtl: withDefault(option("--min-ttl", integer({ min: 0, max: 60 })), 5),
+          }),
+        ),
+        command(
+          "credential",
+          object({
+            action: constant("credential"),
+            op: argument(choice(["get", "store", "erase"])),
+          }),
+        ),
+        object({ action: constant("gh"), args: passThrough({ format: "greedy" }) }),
+      ),
+    }),
+  ),
+  () => ({
+    profile: defaultProfile(),
+    cmd: { action: "gh" as const, args: [] as readonly string[] },
+  }),
+);
+
 if (import.meta.main) {
-  let args = process.argv.slice(2);
-  let profile = process.env.GH_APP_PROFILE || "default";
-  if (args[0] === "--profile") [profile, args] = [args[1], args.slice(2)];
+  const parsed = run(parser, { programName: "gain" });
   let token: string;
+  let args: readonly string[] = [];
   try {
-    if (args[0] === "profile" && args[1] === "list") {
-      // Attributes of every item in the keychain: can exceed spawnSync's 1 MiB default buffer.
-      const dump = spawnSync("security", ["dump-keychain"], {
-        encoding: "utf8",
-        maxBuffer: 256 * 1024 * 1024,
-      });
-      if (dump.status !== 0) throw new Error(`keychain list failed: ${dump.stderr || dump.error}`);
-      process.exit((listProfiles(dump.stdout).forEach((p) => console.log(p)), 0));
-    }
-    if (args[0] === "profile" && args[1] === "remove") {
-      const name = checkProfileName(args[2]);
+    if ("action" in parsed) {
+      if (parsed.action === "profile list") {
+        // Attributes of every item in the keychain: can exceed spawnSync's 1 MiB default buffer.
+        const dump = spawnSync("security", ["dump-keychain"], {
+          encoding: "utf8",
+          maxBuffer: 256 * 1024 * 1024,
+        });
+        if (dump.status !== 0)
+          throw new Error(`keychain list failed: ${dump.stderr || dump.error}`);
+        process.exit((listProfiles(dump.stdout).forEach((p) => console.log(p)), 0));
+      }
+      const name = checkProfileName(parsed.name);
       if (!secret.delete(`config:${name}`)) throw new Error(`profile "${name}" not found`);
       secret.delete(`token:${name}`);
       process.exit((console.error(`gain: removed profile "${name}"`), 0));
     }
-    if (args[0] === "profile")
-      throw new Error("usage: gain profile list | gain profile remove NAME");
-    checkProfileName(profile);
-    if (args[0] === "setup") process.exit((await setup(profile, args.slice(1)), 0));
-    if (args[0] === "token") process.exit((console.log(await getToken(profile)), 0));
-    if (args[0] === "credential") {
+    const { cmd } = parsed;
+    const profile = checkProfileName(parsed.profile);
+    if (cmd.action === "setup") process.exit((await setup(profile, cmd), 0));
+    if (cmd.action === "token") process.exit((console.log(await getToken(profile, cmd.minTtl)), 0));
+    if (cmd.action === "credential") {
       // store/erase are no-ops; the token lives in Keychain already.
-      if (args[1] === "get" && isGitHubHttps(readFileSync(0, "utf8"))) {
+      if (cmd.op === "get" && isGitHubHttps(readFileSync(0, "utf8"))) {
         console.log(`username=x-access-token\npassword=${await getToken(profile)}`);
       }
       process.exit(0);
     }
+    args = cmd.args;
     token = await getToken(profile);
   } catch (e) {
     console.error(`gain: ${(e as Error).message}`);

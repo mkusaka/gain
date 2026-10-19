@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
 import { test } from "node:test";
-import { createJwt, isFresh, isGitHubHttps, listProfiles, pickInstallation } from "./gain.ts";
+import { parse } from "@optique/core/parser";
+import {
+  createJwt,
+  isFresh,
+  isGitHubHttps,
+  listProfiles,
+  parser,
+  pickInstallation,
+} from "./gain.ts";
 
 test("createJwt signs a PKCS#1 key with valid claims", () => {
   // GitHub hands out PKCS#1 PEMs.
@@ -21,11 +29,13 @@ test("createJwt signs a PKCS#1 key with valid claims", () => {
   });
 });
 
-test("isFresh requires more than five minutes of validity", () => {
+test("isFresh requires more than minTtl minutes of validity (default 5)", () => {
   const now = Date.parse("2026-01-01T00:00:00Z");
-  assert.equal(isFresh({ token: "t", expires_at: "2026-01-01T00:10:00Z" }, now), true);
-  assert.equal(isFresh({ token: "t", expires_at: "2026-01-01T00:04:00Z" }, now), false);
-  assert.equal(isFresh(undefined, now), false);
+  assert.equal(isFresh({ token: "t", expires_at: "2026-01-01T00:10:00Z" }, undefined, now), true);
+  assert.equal(isFresh({ token: "t", expires_at: "2026-01-01T00:04:00Z" }, undefined, now), false);
+  assert.equal(isFresh({ token: "t", expires_at: "2026-01-01T00:29:00Z" }, 30, now), false);
+  assert.equal(isFresh({ token: "t", expires_at: "2026-01-01T00:31:00Z" }, 30, now), true);
+  assert.equal(isFresh(undefined, 5, now), false);
 });
 
 test("isGitHubHttps only matches https://github.com", () => {
@@ -52,4 +62,23 @@ test("pickInstallation uses the only installation, otherwise asks", () => {
   assert.equal(pickInstallation([inst(42, "org")]), "42");
   assert.throws(() => pickInstallation([]), /not installed/);
   assert.throws(() => pickInstallation([inst(1, "a"), inst(2, "b")]), /1 \(a\), 2 \(b\)/);
+});
+
+test("parser passes non-gain args to gh untouched and bounds --min-ttl", () => {
+  delete process.env.GH_APP_PROFILE; // the profile default reads it
+  const value = (args: string[]) => {
+    const r = parse(parser, args);
+    return r.success ? r.value : undefined;
+  };
+  assert.deepEqual(value(["--profile", "w", "api", "x", "--jq", ".a", "--help"]), {
+    profile: "w",
+    cmd: { action: "gh", args: ["api", "x", "--jq", ".a", "--help"] },
+  });
+  assert.deepEqual(value([]), { profile: "default", cmd: { action: "gh", args: [] } });
+  assert.deepEqual(value(["token", "--min-ttl", "30"]), {
+    profile: "default",
+    cmd: { action: "token", minTtl: 30 },
+  });
+  assert.equal(value(["token", "--min-ttl", "61"]), undefined);
+  assert.deepEqual(value(["profile", "remove", "w"]), { action: "profile remove", name: "w" });
 });
