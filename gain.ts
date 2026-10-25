@@ -352,8 +352,13 @@ async function installAgent() {
   // Absolute paths: launchd has no PATH to speak of, and shims (mise, ...) aren't the real binary.
   let program: string[];
   if (process.argv[1]?.startsWith("/$bunfs/")) {
-    // Standalone binary (bun build --compile). Use Homebrew's versionless opt/ link so upgrades keep working.
-    program = [process.execPath.replace(/\/Cellar\/gain\/[^/]+\//, "/opt/gain/")];
+    // Standalone binary (bun build --compile). Prefer the `gain` on PATH when it is this binary
+    // (e.g. Homebrew's /opt/homebrew/bin/gain link): the versioned Caskroom path changes on upgrade.
+    const onPath = spawnSync("/bin/sh", ["-c", "command -v gain"], {
+      encoding: "utf8",
+    }).stdout?.trim();
+    const self = realpathSync(process.execPath);
+    program = [onPath && realpathSync(onPath) === self ? onPath : self];
   } else {
     const bun = process.versions.bun
       ? process.execPath

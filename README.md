@@ -9,7 +9,7 @@ The App's private key never sits anywhere another process can read it. It lives 
 ## Setup
 
 ```sh
-brew install mkusaka/tap/gain  # or a release tarball; from a clone see Development
+brew install --cask mkusaka/tap/gain  # or a release tarball; from a clone see Development
 gain agent install             # start it now and at every login (or: gain agent start &)
 gain agent unlock              # first time: choose a passphrase (creates the vault)
 gain setup --client-id Iv23liXXXXXXXXXXXXXX --private-key-path /path/to/app.private-key.pem   # verifies by issuing a token, then saves
@@ -54,7 +54,7 @@ gain agent unlock      # once per login
 gain agent uninstall   # stop it and remove the plist
 ```
 
-The plist runs the absolute paths of your current `bun` and `gain.js` and logs to `~/Library/Logs/gain-agent.log`. It doesn't restart the agent (a restarted agent would be locked anyway); after a crash run `gain agent install` again. Run `install` again also after either path changes (e.g. gain installed under a different Node version), and `uninstall` before removing gain, or launchd keeps trying a missing file at every login.
+The plist runs the absolute path of `gain` (`/opt/homebrew/bin/gain` for the cask; `bun` plus `gain.js` from a clone) and logs to `~/Library/Logs/gain-agent.log`. It doesn't restart the agent (a restarted agent would be locked anyway); after a crash run `gain agent install` again. `brew uninstall --cask gain` stops the agent and removes the plist; from a clone, run `gain agent uninstall` before removing it, or launchd keeps trying a missing file at every login.
 
 ## Design
 
@@ -80,7 +80,19 @@ So the goal is: the key is never somewhere another process can read it, and only
 
 "Only in the agent's memory" holds only if other processes can't read that memory. Node fails this: the official build is signed with the `get-task-allow` entitlement and Homebrew's has no hardened runtime, so `lldb -p <agent pid>` attaches without any prompt and can read the key (also, Node opens an inspector on `SIGUSR1` from any same-user process). Official Bun builds use the hardened runtime without `get-task-allow`, and `lldb` is refused. The agent checks this with `codesign` at startup and refuses to run otherwise.
 
-The release binary goes one step further. Official Bun also carries `allow-dyld-environment-variables` and `disable-library-validation`, so `DYLD_INSERT_LIBRARIES` set in the agent's environment (e.g. by editing the launchd plist) loads arbitrary code into it. The release binary is signed with only the JIT entitlements Bun needs ([packaging/entitlements.plist](packaging/entitlements.plist)), so dyld ignores those variables. Verify a download with `gh attestation verify gain-*.tar.gz -R mkusaka/gain`.
+### Distribution
+
+The release is a single standalone binary signed by [release.yml](.github/workflows/release.yml) and installed as a Homebrew cask. Each choice keeps the guarantees above intact on the user's machine:
+
+- **Standalone binary** (`bun build --compile`): the Bun runtime is embedded, so users need neither Node nor Bun, and the runtime the agent runs on is the one we signed rather than whatever is on `PATH`.
+- **Developer ID, hardened runtime, minimal entitlements**: signed with only the JIT entitlements Bun needs ([packaging/entitlements.plist](packaging/entitlements.plist)). No `get-task-allow`, so no debugger attach. Official Bun also carries `allow-dyld-environment-variables` and `disable-library-validation`, which let `DYLD_INSERT_LIBRARIES` in the agent's environment (e.g. added to the launchd plist) load arbitrary code into it; the release binary has neither, so dyld ignores those variables. The workflow fails if either entitlement or `get-task-allow` shows up.
+- **Universal (arm64 + x86_64)**: one archive, so the cask has one `url`/`sha256`. Both slices are smoke-tested in CI (x86_64 through Rosetta).
+- **Notarized**: a cask download is quarantined, so Gatekeeper checks the notarization on first run.
+- **Cask, not formula**: Homebrew ships prebuilt binaries as casks. A formula install may rewrite a Mach-O and ad-hoc re-sign it, dropping the Developer ID signature; a cask copies the file as is. The cask's `uninstall launchctl:` also stops the agent and removes its plist on `brew uninstall`, so no LaunchAgent is left pointing at a deleted binary.
+- **Stable launchd path**: casks live in a versioned `Caskroom/gain/<version>/` directory, so `gain agent install` writes the `gain` found on `PATH` (`/opt/homebrew/bin/gain`) into the plist when it is the same binary.
+- **Provenance**: archives carry a GitHub build attestation; verify with `gh attestation verify gain-*.tar.gz -R mkusaka/gain`. The build runs without the setup-bun cache, so a poisoned cache can't end up in the signed binary.
+
+After `brew upgrade --cask gain`, run `gain agent install` and `gain agent unlock`: a running agent keeps executing the old binary until restarted.
 
 ### What this does and doesn't protect
 
@@ -129,7 +141,9 @@ git clone https://github.com/org/private-repo
 
 ## Development
 
-From a clone, `npm link` installs `gain` running on Node; its agent then needs an official [Bun](https://bun.sh) on `PATH` (`gain agent start` under Node re-runs itself with `bun`). Releases: push a `vX.Y.Z` tag; [release.yml](.github/workflows/release.yml) builds, signs, notarizes, attests, publishes and updates `mkusaka/homebrew-tap`. Run it manually to validate signing without publishing.
+From a clone, `npm link` installs `gain` running on Node; its agent then needs an official [Bun](https://bun.sh) on `PATH` (`gain agent start` under Node re-runs itself with `bun`).
+
+Releases: push a `vX.Y.Z` tag. [release.yml](.github/workflows/release.yml) builds the universal binary, signs, notarizes, attests, publishes the GitHub release and bumps `Casks/gain.rb` in `mkusaka/homebrew-tap` (see [Distribution](#distribution)). Run it manually (`gh workflow run Release`) to validate signing and notarization without publishing. It needs these secrets in the `release` environment: `APPLE_DEVELOPER_ID_P12_BASE64`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_APP_STORE_CONNECT_API_KEY_BASE64`, `APPLE_APP_STORE_CONNECT_ISSUER_ID`, `APPLE_APP_STORE_CONNECT_KEY_ID`, `HOMEBREW_TAP_TOKEN`.
 
 ```sh
 bun install
