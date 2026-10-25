@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@mkusaka/gain",
+      "name": "gain",
       "dependencies": {
         "@optique/core": "1.3.6",
         "@optique/run": "1.3.6",
