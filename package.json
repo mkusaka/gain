@@ -1,6 +1,6 @@
 {
   "name": "@mkusaka/gain",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Run gh with a GitHub App installation token, with the App key held by a passphrase-locked agent.",
   "license": "MIT",
