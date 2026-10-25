@@ -1,6 +1,6 @@
 # gain
 
-`@mkusaka/gain`: run `gh` with a GitHub App installation token. One TypeScript file (argument parsing by [Optique](https://optique.dev)) for Node (>= 24.2) or [Bun](https://bun.sh); requires `gh`, macOS, and Bun for `gain agent`.
+Run `gh` with a GitHub App installation token. macOS only. One TypeScript file (argument parsing by [Optique](https://optique.dev)), released as a standalone binary built with [Bun](https://bun.sh) and signed with Developer ID (hardened runtime, notarized).
 
 **0.4 is a breaking change**: keys moved from the Keychain to an encrypted vault held by `gain agent`. See [Upgrading from 0.3](#upgrading-from-03-keychain).
 
@@ -9,8 +9,7 @@ The App's private key never sits anywhere another process can read it. It lives 
 ## Setup
 
 ```sh
-curl -fsSL https://bun.sh/install | bash   # the agent needs an official Bun build (see Why Bun)
-npm install -g @mkusaka/gain   # or from a clone: npm link (builds dist/ via prepare)
+brew install mkusaka/tap/gain  # or a release tarball; from a clone see Development
 gain agent install             # start it now and at every login (or: gain agent start &)
 gain agent unlock              # first time: choose a passphrase (creates the vault)
 gain setup --client-id Iv23liXXXXXXXXXXXXXX --private-key-path /path/to/app.private-key.pem   # verifies by issuing a token, then saves
@@ -45,7 +44,7 @@ gain agent status
 gain agent stop
 ```
 
-The agent is not started automatically: run `gain agent start` yourself or `gain agent install` (below). Either way it starts locked. Without a running, unlocked agent no command can get a token; tokens handed out earlier stay valid until they expire (at most 1 hour). The agent runs on [Bun](https://bun.sh) only; `gain agent start` under Node re-runs itself with `bun` (see [Why Bun](#why-bun)).
+The agent is not started automatically: run `gain agent start` yourself or `gain agent install` (below). Either way it starts locked. Without a running, unlocked agent no command can get a token; tokens handed out earlier stay valid until they expire (at most 1 hour). The agent refuses to run on a runtime that lets other processes attach a debugger (see [Why Bun](#why-bun)).
 
 To start it at login, let gain register it with launchd:
 
@@ -79,7 +78,9 @@ So the goal is: the key is never somewhere another process can read it, and only
 
 ### Why Bun
 
-"Only in the agent's memory" holds only if other processes can't read that memory. Node fails this: the official build is signed with the `get-task-allow` entitlement and Homebrew's has no hardened runtime, so `lldb -p <agent pid>` attaches without any prompt and can read the key (also, Node opens an inspector on `SIGUSR1` from any same-user process). Official Bun builds use the hardened runtime without `get-task-allow`, and `lldb` is refused. The agent checks this with `codesign` at startup and refuses to run otherwise. Clients don't hold the key, so they still run on Node.
+"Only in the agent's memory" holds only if other processes can't read that memory. Node fails this: the official build is signed with the `get-task-allow` entitlement and Homebrew's has no hardened runtime, so `lldb -p <agent pid>` attaches without any prompt and can read the key (also, Node opens an inspector on `SIGUSR1` from any same-user process). Official Bun builds use the hardened runtime without `get-task-allow`, and `lldb` is refused. The agent checks this with `codesign` at startup and refuses to run otherwise.
+
+The release binary goes one step further. Official Bun also carries `allow-dyld-environment-variables` and `disable-library-validation`, so `DYLD_INSERT_LIBRARIES` set in the agent's environment (e.g. by editing the launchd plist) loads arbitrary code into it. The release binary is signed with only the JIT entitlements Bun needs ([packaging/entitlements.plist](packaging/entitlements.plist)), so dyld ignores those variables. Verify a download with `gh attestation verify gain-*.tar.gz -R mkusaka/gain`.
 
 ### What this does and doesn't protect
 
@@ -127,6 +128,8 @@ git clone https://github.com/org/private-repo
 [`skills/gain/SKILL.md`](skills/gain/SKILL.md) tells coding agents (Claude Code, Codex, ...) when and how to use `gain`. Copy or symlink it into the agent's skills directory, e.g. `ln -s "$PWD/skills/gain" ~/.claude/skills/gain`.
 
 ## Development
+
+From a clone, `npm link` installs `gain` running on Node; its agent then needs an official [Bun](https://bun.sh) on `PATH` (`gain agent start` under Node re-runs itself with `bun`). Releases: push a `vX.Y.Z` tag; [release.yml](.github/workflows/release.yml) builds, signs, notarizes, attests, publishes and updates `mkusaka/homebrew-tap`. Run it manually to validate signing without publishing.
 
 ```sh
 bun install

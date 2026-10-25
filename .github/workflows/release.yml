@@ -1,0 +1,160 @@
+name: Release
+
+# Tag v* to publish; run manually to validate building, signing and notarization without publishing.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  release:
+    needs: test
+    if: github.actor == 'mkusaka'
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+      APPLE_APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APPLE_APP_STORE_CONNECT_API_KEY_BASE64 }}
+      APPLE_APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APPLE_APP_STORE_CONNECT_ISSUER_ID }}
+      APPLE_APP_STORE_CONNECT_KEY_ID: ${{ secrets.APPLE_APP_STORE_CONNECT_KEY_ID }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      PUBLISH: ${{ github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          no-cache: true # a poisoned cache would end up in the signed binary
+      - run: bun install --frozen-lockfile
+      - name: Set version
+        run: |
+          VERSION=0.0.0
+          if [[ "$PUBLISH" == "true" ]]; then VERSION=${GITHUB_REF_NAME#v}; fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag must be vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Validate secrets
+        run: |
+          required=(APPLE_DEVELOPER_ID_P12_BASE64 APPLE_DEVELOPER_ID_P12_PASSWORD APPLE_KEYCHAIN_PASSWORD
+            APPLE_APP_STORE_CONNECT_API_KEY_BASE64 APPLE_APP_STORE_CONNECT_ISSUER_ID APPLE_APP_STORE_CONNECT_KEY_ID)
+          if [[ "$PUBLISH" == "true" ]]; then required+=(HOMEBREW_TAP_TOKEN); fi
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required secret: $name"
+              exit 1
+            fi
+          done
+      - name: Install signing assets
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/gain-signing.keychain-db"
+          P12_PATH="$RUNNER_TEMP/developer-id-application.p12"
+          API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_APP_STORE_CONNECT_KEY_ID}.p8"
+          echo "$APPLE_DEVELOPER_ID_P12_BASE64" | base64 --decode > "$P12_PATH"
+          echo "$APPLE_APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$API_KEY_PATH"
+          security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$P12_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" \
+            -f pkcs12 -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          {
+            echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
+            echo "API_KEY_PATH=$API_KEY_PATH"
+          } >> "$GITHUB_ENV"
+      - name: Build and sign
+        run: |
+          for arch in arm64 x64; do
+            bun build --compile --target="bun-darwin-$arch" gain.ts --outfile "build/$arch/gain"
+            # Hardened runtime without get-task-allow, or the agent refuses to run (README "Why Bun").
+            codesign --force --options runtime --timestamp \
+              --entitlements packaging/entitlements.plist \
+              --keychain "$KEYCHAIN_PATH" --sign "Developer ID Application" "build/$arch/gain"
+            codesign --verify --strict --verbose=2 "build/$arch/gain"
+            codesign -dv --entitlements - "build/$arch/gain" > "build/$arch.sig" 2>&1
+            grep -q 'flags=.*runtime' "build/$arch.sig"
+            if grep -qE 'get-task-allow|allow-dyld-environment-variables' "build/$arch.sig"; then
+              echo "::error::unexpected entitlement on $arch"
+              exit 1
+            fi
+          done
+          # Smoke test on this arm64 runner: parses args and reaches for the socket.
+          build/arm64/gain agent status 2>&1 | grep -q "not running"
+      - name: Notarize
+        run: |
+          (cd build && zip -q ../notarize.zip arm64/gain x64/gain)
+          xcrun notarytool submit notarize.zip \
+            --key "$API_KEY_PATH" \
+            --key-id "$APPLE_APP_STORE_CONNECT_KEY_ID" \
+            --issuer "$APPLE_APP_STORE_CONNECT_ISSUER_ID" \
+            --timeout 1h --wait
+      - name: Package
+        run: |
+          for arch in arm64 x64; do
+            mkdir -p "pkg/$arch/skills"
+            cp "build/$arch/gain" "pkg/$arch/gain"
+            cp -R skills/. "pkg/$arch/skills/"
+            tar -C "pkg/$arch" -czf "gain-${VERSION}-darwin-${arch}.tar.gz" .
+          done
+          shasum -a 256 gain-*.tar.gz
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: env.PUBLISH == 'true'
+        with:
+          subject-path: gain-*.tar.gz
+      - name: Publish GitHub release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" gain-*.tar.gz \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "gain $GITHUB_REF_NAME" --generate-notes
+      - name: Update Homebrew tap
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          arm64_sha=$(shasum -a 256 "gain-$VERSION-darwin-arm64.tar.gz" | awk '{print $1}')
+          x64_sha=$(shasum -a 256 "gain-$VERSION-darwin-x64.tar.gz" | awk '{print $1}')
+          sed -e "s|__VERSION__|$VERSION|" \
+            -e "s|__DARWIN_ARM64_URL__|$base/gain-$VERSION-darwin-arm64.tar.gz|" \
+            -e "s|__DARWIN_ARM64_SHA256__|$arm64_sha|" \
+            -e "s|__DARWIN_X64_URL__|$base/gain-$VERSION-darwin-x64.tar.gz|" \
+            -e "s|__DARWIN_X64_SHA256__|$x64_sha|" \
+            packaging/homebrew/gain.rb > "$RUNNER_TEMP/gain.rb"
+          if grep -q __ "$RUNNER_TEMP/gain.rb"; then
+            echo "::error::unreplaced placeholder"
+            exit 1
+          fi
+          ruby -c "$RUNNER_TEMP/gain.rb"
+          formula_b64=$(base64 < "$RUNNER_TEMP/gain.rb" | tr -d '\n')
+          gh api repos/mkusaka/homebrew-tap/dispatches \
+            -f event_type=update-formula \
+            -f "client_payload[formula]=gain" \
+            -f "client_payload[repository]=$GITHUB_REPOSITORY" \
+            -f "client_payload[version]=$VERSION" \
+            -f "client_payload[formula_contents_b64]=$formula_b64"
+      - name: Cleanup signing assets
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP"/developer-id-application.p12 "$RUNNER_TEMP"/AuthKey_*.p8
+          if [[ -n "${KEYCHAIN_PATH:-}" ]]; then security delete-keychain "$KEYCHAIN_PATH" || true; fi

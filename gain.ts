@@ -350,15 +350,22 @@ async function installAgent() {
   );
   if (running) throw new Error("an agent is already running; stop it first: gain agent stop");
   // Absolute paths: launchd has no PATH to speak of, and shims (mise, ...) aren't the real binary.
-  const bun = process.versions.bun
-    ? process.execPath
-    : spawnSync("bun", ["-e", "console.log(process.execPath)"], {
-        encoding: "utf8",
-      }).stdout?.trim();
-  if (!bun) throw new Error("the agent needs Bun (https://bun.sh)");
+  let program: string[];
+  if (process.argv[1]?.startsWith("/$bunfs/")) {
+    // Standalone binary (bun build --compile). Use Homebrew's versionless opt/ link so upgrades keep working.
+    program = [process.execPath.replace(/\/Cellar\/gain\/[^/]+\//, "/opt/gain/")];
+  } else {
+    const bun = process.versions.bun
+      ? process.execPath
+      : spawnSync("bun", ["-e", "console.log(process.execPath)"], {
+          encoding: "utf8",
+        }).stdout?.trim();
+    if (!bun) throw new Error("the agent needs Bun (https://bun.sh)");
+    program = [bun, realpathSync(process.argv[1])];
+  }
   const log = join(homedir(), "Library/Logs/gain-agent.log");
   mkdirSync(join(homedir(), "Library/LaunchAgents"), { recursive: true });
-  writeFileSync(PLIST, launchdPlist([bun, realpathSync(process.argv[1]), "agent", "start"], log));
+  writeFileSync(PLIST, launchdPlist([...program, "agent", "start"], log));
   const r = launchctl("bootstrap", `gui/${process.getuid!()}`, PLIST);
   if (r.status !== 0) throw new Error(`launchctl bootstrap failed: ${r.stderr}`);
   return `installed ${PLIST}; the agent starts at login (log: ${log}). Now run: gain agent unlock`;

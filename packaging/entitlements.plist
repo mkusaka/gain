@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Only what Bun's JIT needs. Unlike the official Bun build, no allow-dyld-environment-variables or
+     disable-library-validation (DYLD_INSERT_LIBRARIES injection) and no get-task-allow (debugger attach). -->
+<plist version="1.0"><dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-executable-page-protection</key><true/>
+</dict></plist>
