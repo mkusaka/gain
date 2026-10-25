@@ -123,5 +123,6 @@ test("parser passes non-gain args to gh untouched and bounds --min-ttl", () => {
   assert.deepEqual(value(["profile", "remove", "w"]), { action: "profile remove", name: "w" });
   assert.deepEqual(value(["revoke"]), { profile: "default", cmd: { action: "revoke" } });
   assert.deepEqual(value(["agent", "unlock"]), { action: "agent", op: "unlock" });
+  assert.deepEqual(value(["agent", "reset"]), { action: "agent", op: "reset" });
   assert.equal(value(["agent", "dump"]), undefined);
 });

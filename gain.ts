@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Run `gh` with a GitHub App installation token in GH_TOKEN. Runs on Node (>=24.2) or Bun, macOS only.
 // Private keys live only inside `gain agent`, encrypted at rest with a passphrase; clients get tokens.
-// Usage: gain agent start | unlock | lock | stop | status | install | uninstall (launchd)
+// Usage: gain agent start | unlock | lock | stop | status | install | uninstall (launchd) | reset
 //        gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE
 //        gain [--profile NAME] <gh args...>   e.g. gain --profile work pr list -R org/repo
 //        gain [--profile NAME] token [--min-ttl MINUTES]   print the token (for curl, scripts, ...)
@@ -314,14 +314,16 @@ async function startAgent() {
   server.listen(SOCKET, () => console.error(`gain: agent listening on ${SOCKET} (locked)`));
 }
 
-// Read from the terminal without echo; `read -s` restores the tty even on Ctrl-C.
-function readSecret(prompt: string): string {
-  const r = spawnSync(
-    "/bin/bash",
-    ["-c", 'read -rsp "$1" s </dev/tty && echo >/dev/tty && printf %s "$s"', "gain", prompt],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
-  );
-  if (r.status !== 0) throw new Error("no passphrase entered");
+// Read from the terminal (never a pipe), without echo unless `echo`; `read -s` restores the tty even on Ctrl-C.
+function readTty(prompt: string, echo = false): string {
+  const read = echo
+    ? 'read -rp "$1" s </dev/tty && printf %s "$s"'
+    : 'read -rsp "$1" s </dev/tty && echo >/dev/tty && printf %s "$s"';
+  const r = spawnSync("/bin/bash", ["-c", read, "gain", prompt], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  if (r.status !== 0) throw new Error("no input from the terminal");
   return r.stdout;
 }
 
@@ -385,14 +387,28 @@ function uninstallAgent() {
 async function unlockAgent() {
   if ((await call({ cmd: "status" })).unlocked) return "already unlocked";
   if (existsSync(VAULT)) {
-    await call({ cmd: "unlock", passphrase: readSecret("gain passphrase: ") });
+    await call({ cmd: "unlock", passphrase: readTty("gain passphrase: ") });
     return "unlocked";
   }
-  const passphrase = readSecret("new gain passphrase (min 12 chars): ");
+  const passphrase = readTty("new gain passphrase (min 12 chars): ");
   if (passphrase.length < 12) throw new Error("passphrase too short");
-  if (readSecret("again: ") !== passphrase) throw new Error("passphrases don't match");
+  if (readTty("again: ") !== passphrase) throw new Error("passphrases don't match");
   await call({ cmd: "unlock", passphrase });
-  return `created ${VAULT} and unlocked; if you forget the passphrase, delete it and set up again`;
+  return `created ${VAULT} and unlocked; if you forget the passphrase: gain agent reset`;
+}
+
+// For a forgotten passphrase: the vault is the only copy of the keys, so this can't be undone.
+async function resetAgent() {
+  if (!existsSync(VAULT)) return "no vault; nothing to reset";
+  const answer = readTty(
+    `Delete ${VAULT}? Every profile's private key in it is lost for good. Type "reset" to confirm: `,
+    true,
+  );
+  if (answer !== "reset") throw new Error("aborted");
+  // Drop the decrypted keys a running agent may hold; it stays up, locked.
+  await call({ cmd: "lock" }).catch(() => {});
+  rmSync(VAULT);
+  return "deleted the vault. Next: gain agent unlock (new passphrase), then gain setup with a new private key per profile";
 }
 
 // Keychain items written by gain <= 0.3: service "gain", accounts config:<p> and token:<p>.
@@ -437,7 +453,9 @@ export const parser = withDefault(
       "agent",
       object({
         action: constant("agent"),
-        op: argument(choice(["start", "unlock", "lock", "stop", "status", "install", "uninstall"])),
+        op: argument(
+          choice(["start", "unlock", "lock", "stop", "status", "install", "uninstall", "reset"]),
+        ),
       }),
     ),
     command("migrate-keychain", object({ action: constant("migrate-keychain") })),
@@ -502,6 +520,7 @@ if (import.meta.main) {
         else if (parsed.op === "unlock") done(await unlockAgent());
         else if (parsed.op === "install") done(await installAgent());
         else if (parsed.op === "uninstall") done(uninstallAgent());
+        else if (parsed.op === "reset") done(await resetAgent());
         else if (parsed.op === "status")
           done((await call({ cmd: "status" })).unlocked ? "unlocked" : "locked");
         else

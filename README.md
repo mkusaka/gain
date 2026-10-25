@@ -20,7 +20,7 @@ rm /path/to/app.private-key.pem   # the vault is now the only copy
 
 Grant the App only the permissions you need (e.g. Contents: read, Metadata: read). Note that `gh pr list` silently returns nothing without **Issues: read**. After changing the App's permissions, run `setup` again: it also replaces the cached token, which otherwise keeps the old permissions until it expires.
 
-Run `setup` again to change settings. If you forget the passphrase, delete the vault, generate a new private key on the App settings page and run `setup` again.
+Run `setup` again to change settings. If you forget the passphrase, run `gain agent reset` (deletes the vault after you type `reset`), choose a new passphrase with `gain agent unlock`, generate a new private key on the App settings page and run `setup` again.
 
 ### Upgrading from 0.3 (Keychain)
 
@@ -42,6 +42,7 @@ gain agent unlock   # passphrase from the terminal
 gain agent lock     # forget the key and tokens; nothing can be issued until the next unlock
 gain agent status
 gain agent stop
+gain agent reset   # forgot the passphrase: delete the vault (asks you to type "reset")
 ```
 
 The agent is not started automatically: run `gain agent start` yourself or `gain agent install` (below). Either way it starts locked. Without a running, unlocked agent no command can get a token; tokens handed out earlier stay valid until they expire (at most 1 hour). The agent refuses to run on a runtime that lets other processes attach a debugger (see [Why Bun](#why-bun)).
