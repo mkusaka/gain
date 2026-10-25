@@ -5,7 +5,7 @@ description: Run GitHub CLI (gh) commands, GitHub REST calls, or git fetch/clone
 
 # gain
 
-`gain` wraps `gh`: it issues a GitHub App installation token (cached in the macOS Keychain) and runs `gh` with it in `GH_TOKEN`. Everything after the optional `--profile` is passed to `gh` unchanged.
+`gain` wraps `gh`: it gets a GitHub App installation token from the `gain agent` background process and runs `gh` with it in `GH_TOKEN`. Everything after the optional `--profile` is passed to `gh` unchanged.
 
 ## Use
 
@@ -25,7 +25,7 @@ gain token                                  # raw token, only for non-gh tools (
 ## Rules
 
 - Never print, log, or paste the token. Don't run bare `gain token` in a way that shows its output; only use it inline, e.g. `curl -H "Authorization: Bearer $(gain token)" ...`. Prefer `gain api ...` over curl.
-- Don't run `gain setup` or `gain profile remove` yourself or touch the private key; setup is the user's job. If you see `profile "..." not configured`, tell the user to run `gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE`.
+- Don't run `gain setup`, `gain profile remove`, `gain migrate-keychain` or `gain agent unlock/stop` yourself or touch the private key or `~/.local/share/gain`; that is the user's job. If you see `profile "..." not configured`, tell the user to run `gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE`.
 - Don't change git config. If a git clone/fetch needs the App, point the user to the README's credential helper section.
 
 ## Troubleshooting
@@ -33,6 +33,7 @@ gain token                                  # raw token, only for non-gh tools (
 | Symptom                                        | Cause / action                                                                                    |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `profile "x" not configured`                   | Ask the user to run `setup` for that profile.                                                     |
+| `the agent is not running` / `is locked`       | Ask the user to run `gain agent start` / `gain agent unlock`. Don't retry in a loop.              |
 | `token request failed: 401/404`                | Wrong Client ID / Installation ID or revoked key. Ask the user to re-run `setup`.                 |
 | `gh pr list` returns nothing                   | The App lacks **Issues: read**. Report it; don't assume the repo has no PRs.                      |
 | `Resource not accessible by integration` (403) | The App lacks that permission or isn't installed on the repo. Report which permission is missing. |

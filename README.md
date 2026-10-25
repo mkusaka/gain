@@ -1,22 +1,91 @@
 # gain
 
-`@mkusaka/gain`: run `gh` with a GitHub App installation token. One TypeScript file (argument parsing by [Optique](https://optique.dev)) for Node (>= 24.2) or [Bun](https://bun.sh); requires `gh` and macOS.
+`@mkusaka/gain`: run `gh` with a GitHub App installation token. One TypeScript file (argument parsing by [Optique](https://optique.dev)) for Node (>= 24.2) or [Bun](https://bun.sh); requires `gh`, macOS, and Bun for `gain agent`.
 
-The Client ID, Installation ID, private key and the cached token (reused until 5 minutes before expiry) are stored in the macOS Keychain under service `gain` (items `config:<profile>` and `token:<profile>`). No files or env vars; existing `gh` / git config is not touched. Values are written through the `security` CLI's stdin, so secrets never appear in process arguments.
+**0.4 is a breaking change**: keys moved from the Keychain to an encrypted vault held by `gain agent`. See [Upgrading from 0.3](#upgrading-from-03-keychain).
+
+The App's private key never sits anywhere another process can read it. It lives only inside `gain agent`, a small background process that keeps it in memory while unlocked and on disk only in `~/.local/share/gain/vault`, encrypted with AES-256-GCM under a key derived from your passphrase (scrypt). Every other `gain` command asks the agent over a Unix socket (`~/.local/share/gain/agent.sock`, user-only) and gets back a 1-hour installation token; no request returns the key. Tokens are cached in the agent's memory only. Existing `gh` / git config is not touched.
 
 ## Setup
 
 ```sh
+curl -fsSL https://bun.sh/install | bash   # the agent needs an official Bun build (see Why Bun)
 npm install -g @mkusaka/gain   # or from a clone: npm link (builds dist/ via prepare)
+gain agent install             # start it now and at every login (or: gain agent start &)
+gain agent unlock              # first time: choose a passphrase (creates the vault)
 gain setup --client-id Iv23liXXXXXXXXXXXXXX --private-key-path /path/to/app.private-key.pem   # verifies by issuing a token, then saves
-rm /path/to/app.private-key.pem   # optional: the key now lives in Keychain
+rm /path/to/app.private-key.pem   # the vault is now the only copy
 ```
 
 `--client-id` is the App's Client ID (`Iv23li...`, shown on the App settings page), which GitHub recommends as the JWT issuer; the numeric App ID also works. The Installation ID is looked up automatically when the App is installed on exactly one account; otherwise `setup` lists them and you pass `--installation-id` (also the number at the end of `github.com/organizations/<org>/settings/installations/<id>`).
 
 Grant the App only the permissions you need (e.g. Contents: read, Metadata: read). Note that `gh pr list` silently returns nothing without **Issues: read**. After changing the App's permissions, run `setup` again: it also replaces the cached token, which otherwise keeps the old permissions until it expires.
 
-Run `setup` again to change settings. Only GitHub's standard 2048-bit App keys fit the Keychain write path; larger keys are rejected.
+Run `setup` again to change settings. If you forget the passphrase, delete the vault, generate a new private key on the App settings page and run `setup` again.
+
+### Upgrading from 0.3 (Keychain)
+
+0.3 kept the private key in the macOS Keychain, readable by any process running as you via `security find-generic-password` without a prompt. Move it into the vault and delete the Keychain items:
+
+```sh
+gain agent start &
+gain agent unlock
+gain migrate-keychain
+```
+
+If the key may already have leaked, also generate a new private key on the App settings page, delete the old one, and run `setup` with the new one.
+
+## The agent
+
+```sh
+gain agent start    # foreground; starts locked
+gain agent unlock   # passphrase from the terminal
+gain agent lock     # forget the key and tokens; nothing can be issued until the next unlock
+gain agent status
+gain agent stop
+```
+
+The agent is not started automatically: run `gain agent start` yourself or `gain agent install` (below). Either way it starts locked. Without a running, unlocked agent no command can get a token; tokens handed out earlier stay valid until they expire (at most 1 hour). The agent runs on [Bun](https://bun.sh) only; `gain agent start` under Node re-runs itself with `bun` (see [Why Bun](#why-bun)).
+
+To start it at login, let gain register it with launchd:
+
+```sh
+gain agent install     # writes ~/Library/LaunchAgents/com.github.mkusaka.gain.agent.plist and starts the agent now
+gain agent unlock      # once per login
+gain agent uninstall   # stop it and remove the plist
+```
+
+The plist runs the absolute paths of your current `bun` and `gain.js` and logs to `~/Library/Logs/gain-agent.log`. It doesn't restart the agent (a restarted agent would be locked anyway); after a crash run `gain agent install` again. Run `install` again also after either path changes (e.g. gain installed under a different Node version), and `uninstall` before removing gain, or launchd keeps trying a missing file at every login.
+
+## Design
+
+### The problem with 0.3
+
+0.3 stored the private key in the login Keychain through `/usr/bin/security`. The Keychain item trusts the app that created it, here `security` itself, so any process running as you could read the key without a prompt (that is also why gain never prompted):
+
+```sh
+security find-generic-password -s gain -a config:default -w | base64 -d
+```
+
+A stolen App private key is worse than a stolen OAuth refresh token ([the issue raised for `gh auth login --expiring`](https://suzuki-shunsuke.hashnode.dev/github-cli-s-new-expiring-tokens-still-leave-your-refresh-token-exposed-to-malware)): it never expires until you delete it on GitHub, using it elsewhere changes nothing for you so you can't notice, and it mints tokens for every installation of the App, not only the one you configured.
+
+### Agent, vault, socket
+
+So the goal is: the key is never somewhere another process can read it, and only short-lived tokens leave the process that holds it. This follows [ghtkn](https://github.com/suzuki-shunsuke/ghtkn)'s agent backend.
+
+- **Vault**: the key is at rest only in `~/.local/share/gain/vault` (0600), AES-256-GCM encrypted under a key derived from your passphrase with scrypt. The passphrase is never stored, so copying the file is not enough.
+- **Agent**: after `gain agent unlock`, only the agent process holds the decrypted key, in memory. `gain agent lock` drops the key and cached tokens.
+- **Socket**: other commands ask the agent over `~/.local/share/gain/agent.sock` (directory 0700) and get a token back. No request returns the key. Tokens are cached in the agent's memory only, never on disk.
+
+### Why Bun
+
+"Only in the agent's memory" holds only if other processes can't read that memory. Node fails this: the official build is signed with the `get-task-allow` entitlement and Homebrew's has no hardened runtime, so `lldb -p <agent pid>` attaches without any prompt and can read the key (also, Node opens an inspector on `SIGUSR1` from any same-user process). Official Bun builds use the hardened runtime without `get-task-allow`, and `lldb` is refused. The agent checks this with `codesign` at startup and refuses to run otherwise. Clients don't hold the key, so they still run on Node.
+
+### What this does and doesn't protect
+
+- Protected: the private key. Malware running as you can no longer copy it and mint tokens indefinitely from elsewhere; it is never in Keychain, a plaintext file, process arguments or a socket response.
+- Not protected: while the agent is unlocked, any process running as you can connect to the socket and get a token (valid up to 1 hour), the same as ghtkn's agent. Other users can't (directory 0700). `gain agent lock` (e.g. from a screen-lock hook) closes that window.
+- Out of scope: root, a keylogger capturing the passphrase, or anything that can rewrite `gain.js`, your bun or the launchd plist (e.g. to add a debugger env var) before the agent starts.
 
 ## Profiles (multiple Apps)
 
@@ -27,7 +96,7 @@ gain --profile work setup --client-id Iv23liYYYYYYYYYYYYYY --private-key-path wo
 gain --profile work pr list -R work-org/repo
 GH_APP_PROFILE=work gain pr list -R work-org/repo   # e.g. via direnv per directory
 gain profile list                                  # configured profiles
-gain profile remove work                           # delete its config and cached token from Keychain
+gain profile remove work                           # delete it from the vault
 ```
 
 ## Usage
@@ -40,7 +109,7 @@ curl -H "Authorization: Bearer $(gain token)" https://api.github.com/repos/org/p
 
 A token stays fixed for the life of the process it was handed to, and GitHub App tokens expire after 60 minutes. `gain token --min-ttl MINUTES` (0-60, default 5) issues a new token unless the cached one has more than that left, e.g. `--min-ttl 30` before a long `gh run watch`.
 
-If a token leaks, `gain revoke` revokes the cached token and drops it from Keychain; the next call issues a new one. Tokens handed out before that one stay valid until they expire.
+If a token leaks, `gain revoke` revokes the cached token and drops it from the agent; the next call issues a new one. Tokens handed out before that one stay valid until they expire.
 
 ### git (optional)
 

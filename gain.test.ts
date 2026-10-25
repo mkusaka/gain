@@ -1,15 +1,50 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, verify } from "node:crypto";
+import { generateKeyPairSync, randomBytes, verify } from "node:crypto";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { parse } from "@optique/core/parser";
 import {
+  Agent,
   createJwt,
+  deriveKey,
   isFresh,
   isGitHubHttps,
+  launchdPlist,
   listProfiles,
   parser,
   pickInstallation,
+  seal,
+  unseal,
 } from "./gain.ts";
+
+test("vault round-trips and rejects a wrong passphrase", () => {
+  const salt = randomBytes(16);
+  const config = { clientId: "c", installationId: "1", privateKey: "pem" };
+  const { data } = JSON.parse(seal(deriveKey("right", salt), salt, new Map([["w", config]])));
+  const blob = Buffer.from(data, "base64");
+  assert.deepEqual(unseal(deriveKey("right", salt), blob), new Map([["w", config]]));
+  assert.throws(() => unseal(deriveKey("wrong", salt), blob), /wrong passphrase/);
+});
+
+test("agent creates the vault on first unlock and gates everything behind it", async () => {
+  const vault = join(mkdtempSync(join(tmpdir(), "gain-")), "vault");
+  const agent = new Agent(vault);
+  assert.deepEqual(await agent.handle({ cmd: "status" }), { unlocked: false });
+  await assert.rejects(agent.handle({ cmd: "list" }), /locked/);
+  await agent.handle({ cmd: "unlock", passphrase: "pass" });
+  assert.equal(statSync(vault).mode & 0o777, 0o600);
+  assert.ok(!readFileSync(vault, "utf8").includes("pem"));
+  assert.deepEqual(await agent.handle({ cmd: "list" }), { profiles: [] });
+  await assert.rejects(agent.handle({ cmd: "token", profile: "x" }), /not configured/);
+  await assert.rejects(agent.handle({ cmd: "token", profile: "../x" }), /profile names/);
+  await agent.handle({ cmd: "lock" });
+  assert.equal(agent.key, undefined);
+  await assert.rejects(agent.handle({ cmd: "unlock", passphrase: "nope" }), /wrong passphrase/);
+  await agent.handle({ cmd: "unlock", passphrase: "pass" });
+  assert.deepEqual(await agent.handle({ cmd: "status" }), { unlocked: true });
+});
 
 test("createJwt signs a PKCS#1 key with valid claims", () => {
   // GitHub hands out PKCS#1 PEMs.
@@ -45,7 +80,7 @@ test("isGitHubHttps only matches https://github.com", () => {
   assert.equal(isGitHubHttps("protocol=https\nhost=gitlab.com\n"), false);
 });
 
-test("listProfiles picks config items of the gain service only", () => {
+test("listProfiles picks gain <= 0.3 Keychain config items only", () => {
   const item = (svce: string, acct: string) =>
     `keychain: "/x/login.keychain-db"\nclass: "genp"\nattributes:\n    "acct"<blob>="${acct}"\n    "svce"<blob>="${svce}"\n`;
   const dump = [
@@ -55,6 +90,11 @@ test("listProfiles picks config items of the gain service only", () => {
     item("other", "config:nope"),
   ].join("");
   assert.deepEqual(listProfiles(dump), ["default", "work"]);
+});
+
+test("launchdPlist escapes paths", () => {
+  const xml = launchdPlist(["/a&b/bun", "/x<y/gain.js"], "/l.log");
+  assert.ok(xml.includes("<string>/a&amp;b/bun</string><string>/x&lt;y/gain.js</string>"));
 });
 
 test("pickInstallation uses the only installation, otherwise asks", () => {
@@ -82,4 +122,6 @@ test("parser passes non-gain args to gh untouched and bounds --min-ttl", () => {
   assert.equal(value(["token", "--min-ttl", "61"]), undefined);
   assert.deepEqual(value(["profile", "remove", "w"]), { action: "profile remove", name: "w" });
   assert.deepEqual(value(["revoke"]), { profile: "default", cmd: { action: "revoke" } });
+  assert.deepEqual(value(["agent", "unlock"]), { action: "agent", op: "unlock" });
+  assert.equal(value(["agent", "dump"]), undefined);
 });
