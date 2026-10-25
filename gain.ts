@@ -39,6 +39,9 @@ const VAULT = join(DIR, "vault");
 const SOCKET = join(DIR, "agent.sock");
 const LABEL = "com.github.mkusaka.gain.agent";
 const PLIST = join(homedir(), `Library/LaunchAgents/${LABEL}.plist`);
+// Set by the release build (bun build --define); "dev" when run from a clone.
+declare const GAIN_VERSION: string | undefined;
+export const VERSION = typeof GAIN_VERSION === "string" ? GAIN_VERSION : "dev";
 const SETUP_USAGE =
   "gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE";
 
@@ -220,7 +223,7 @@ export class Agent {
   }
 
   async handle(req: Record<string, any>): Promise<Record<string, unknown>> {
-    if (req.cmd === "status") return { unlocked: !!this.key };
+    if (req.cmd === "status") return { unlocked: !!this.key, version: VERSION };
     if (req.cmd === "lock") return (this.lock(), {});
     if (req.cmd === "unlock") return (this.unlock(String(req.passphrase)), {});
     if (!this.key) throw new Error("the agent is locked; run: gain agent unlock");
@@ -384,6 +387,13 @@ function uninstallAgent() {
   return `removed ${PLIST} and stopped the agent`;
 }
 
+// A brew upgrade doesn't restart the agent, so it may still run the previous binary.
+export function statusLine({ unlocked, version }: Record<string, any>, client = VERSION): string {
+  const state = `${unlocked ? "unlocked" : "locked"} (agent ${version ?? "unknown"})`;
+  if (version === client) return state;
+  return `${state}; this gain is ${client}, restart the agent to update it: gain agent install`;
+}
+
 async function unlockAgent() {
   if ((await call({ cmd: "status" })).unlocked) return "already unlocked";
   if (existsSync(VAULT)) {
@@ -521,8 +531,7 @@ if (import.meta.main) {
         else if (parsed.op === "install") done(await installAgent());
         else if (parsed.op === "uninstall") done(uninstallAgent());
         else if (parsed.op === "reset") done(await resetAgent());
-        else if (parsed.op === "status")
-          done((await call({ cmd: "status" })).unlocked ? "unlocked" : "locked");
+        else if (parsed.op === "status") done(statusLine(await call({ cmd: "status" })));
         else
           done(
             (await call({ cmd: parsed.op }),

@@ -40,7 +40,7 @@ If the key may already have leaked, also generate a new private key on the App s
 gain agent start    # foreground; starts locked
 gain agent unlock   # passphrase from the terminal
 gain agent lock     # forget the key and tokens; nothing can be issued until the next unlock
-gain agent status
+gain agent status  # locked/unlocked and the agent's version
 gain agent stop
 gain agent reset   # forgot the passphrase: delete the vault (asks you to type "reset")
 ```
@@ -55,7 +55,7 @@ gain agent unlock      # once per login
 gain agent uninstall   # stop it and remove the plist
 ```
 
-The plist runs the absolute path of `gain` (`/opt/homebrew/bin/gain` for the cask; `bun` plus `gain.js` from a clone) and logs to `~/Library/Logs/gain-agent.log`. It doesn't restart the agent (a restarted agent would be locked anyway); after a crash run `gain agent install` again. `brew uninstall --cask gain` stops the agent and removes the plist; from a clone, run `gain agent uninstall` before removing it, or launchd keeps trying a missing file at every login.
+The plist runs the absolute path of `gain` (`/opt/homebrew/bin/gain` for the cask; `bun` plus `gain.js` from a clone) and logs to `~/Library/Logs/gain-agent.log`. It doesn't restart the agent (a restarted agent would be locked anyway); after a crash run `gain agent install` again. Remove gain with `brew uninstall --zap --cask gain` (or `gain agent uninstall` first), or launchd keeps trying a missing file at every login.
 
 ## Design
 
@@ -89,11 +89,11 @@ The release is a single standalone binary signed by [release.yml](.github/workfl
 - **Developer ID, hardened runtime, minimal entitlements**: signed with only the JIT entitlements Bun needs ([packaging/entitlements.plist](packaging/entitlements.plist)). No `get-task-allow`, so no debugger attach. Official Bun also carries `allow-dyld-environment-variables` and `disable-library-validation`, which let `DYLD_INSERT_LIBRARIES` in the agent's environment (e.g. added to the launchd plist) load arbitrary code into it; the release binary has neither, so dyld ignores those variables. The workflow fails if either entitlement or `get-task-allow` shows up.
 - **Universal (arm64 + x86_64)**: one archive, so the cask has one `url`/`sha256`. Both slices are smoke-tested in CI (x86_64 through Rosetta).
 - **Notarized**: a cask download is quarantined, so Gatekeeper checks the notarization on first run.
-- **Cask, not formula**: Homebrew ships prebuilt binaries as casks. A formula install may rewrite a Mach-O and ad-hoc re-sign it, dropping the Developer ID signature; a cask copies the file as is. The cask's `uninstall launchctl:` also stops the agent and removes its plist on `brew uninstall`, so no LaunchAgent is left pointing at a deleted binary.
+- **Cask, not formula**: Homebrew ships prebuilt binaries as casks. A formula install may rewrite a Mach-O and ad-hoc re-sign it, dropping the Developer ID signature; a cask copies the file as is. Its `zap` stanza stops the agent and removes the plist.
 - **Stable launchd path**: casks live in a versioned `Caskroom/gain/<version>/` directory, so `gain agent install` writes the `gain` found on `PATH` (`/opt/homebrew/bin/gain`) into the plist when it is the same binary.
 - **Provenance**: archives carry a GitHub build attestation; verify with `gh attestation verify gain-*.tar.gz -R mkusaka/gain`. The build runs without the setup-bun cache, so a poisoned cache can't end up in the signed binary.
 
-After `brew upgrade --cask gain`, run `gain agent install` and `gain agent unlock`: a running agent keeps executing the old binary until restarted.
+- **Upgrades don't stop the agent**: stopping it would lock it, and restarting from a cask hook isn't possible (Homebrew runs install steps in a sandbox that can't `launchctl bootstrap`). So `brew upgrade` leaves the agent running, still unlocked, on the old binary; it switches to the new one at the next login, or right away with `gain agent install` + `gain agent unlock`. `gain agent status` prints the agent's version and says so when it differs from the installed gain.
 
 ### What this does and doesn't protect
 

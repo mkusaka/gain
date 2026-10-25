@@ -85,7 +85,8 @@ jobs:
       - name: Build and sign
         run: |
           for arch in arm64 x64; do
-            bun build --compile --target="bun-darwin-$arch" gain.ts --outfile "build/$arch/gain"
+            bun build --compile --target="bun-darwin-$arch" --define "GAIN_VERSION=\"$VERSION\"" \
+              gain.ts --outfile "build/$arch/gain"
           done
           # One universal binary: the cask has a single url/sha256.
           lipo -create build/arm64/gain build/x64/gain -output build/gain
@@ -103,6 +104,7 @@ jobs:
           lipo -archs build/gain | grep -q 'x86_64 arm64'
           # Smoke test both slices (x86_64 through Rosetta): parse args and reach for the socket.
           build/gain agent status 2>&1 | grep -q "not running"
+          strings build/gain | grep -qF "$VERSION" # --define took effect
           arch -x86_64 build/gain agent status 2>&1 | grep -q "not running"
       - name: Notarize
         run: |

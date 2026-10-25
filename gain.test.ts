@@ -16,6 +16,7 @@ import {
   parser,
   pickInstallation,
   seal,
+  statusLine,
   unseal,
 } from "./gain.ts";
 
@@ -31,7 +32,7 @@ test("vault round-trips and rejects a wrong passphrase", () => {
 test("agent creates the vault on first unlock and gates everything behind it", async () => {
   const vault = join(mkdtempSync(join(tmpdir(), "gain-")), "vault");
   const agent = new Agent(vault);
-  assert.deepEqual(await agent.handle({ cmd: "status" }), { unlocked: false });
+  assert.deepEqual(await agent.handle({ cmd: "status" }), { unlocked: false, version: "dev" });
   await assert.rejects(agent.handle({ cmd: "list" }), /locked/);
   await agent.handle({ cmd: "unlock", passphrase: "pass" });
   assert.equal(statSync(vault).mode & 0o777, 0o600);
@@ -43,7 +44,7 @@ test("agent creates the vault on first unlock and gates everything behind it", a
   assert.equal(agent.key, undefined);
   await assert.rejects(agent.handle({ cmd: "unlock", passphrase: "nope" }), /wrong passphrase/);
   await agent.handle({ cmd: "unlock", passphrase: "pass" });
-  assert.deepEqual(await agent.handle({ cmd: "status" }), { unlocked: true });
+  assert.deepEqual(await agent.handle({ cmd: "status" }), { unlocked: true, version: "dev" });
 });
 
 test("createJwt signs a PKCS#1 key with valid claims", () => {
@@ -95,6 +96,15 @@ test("listProfiles picks gain <= 0.3 Keychain config items only", () => {
 test("launchdPlist escapes paths", () => {
   const xml = launchdPlist(["/a&b/bun", "/x<y/gain.js"], "/l.log");
   assert.ok(xml.includes("<string>/a&amp;b/bun</string><string>/x&lt;y/gain.js</string>"));
+});
+
+test("statusLine flags an agent running another version", () => {
+  assert.equal(statusLine({ unlocked: true, version: "0.4.2" }, "0.4.2"), "unlocked (agent 0.4.2)");
+  assert.match(
+    statusLine({ unlocked: false, version: "0.4.1" }, "0.4.2"),
+    /^locked .*gain agent install$/,
+  );
+  assert.match(statusLine({ unlocked: false }, "0.4.2"), /agent unknown/);
 });
 
 test("pickInstallation uses the only installation, otherwise asks", () => {
