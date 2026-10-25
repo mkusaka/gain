@@ -45,7 +45,8 @@ launch)
   mkdir -p "$EV"
   tmux new-session -d -s "$S" -n agent -x 200 -y 50 -c "$REPO" -e HOME="$RUN" -e PATH="$PATH" \
     "exec ./gain.ts agent start 2>>'$EV/agent.log'"
-  tmux new-window -d -t "$S" -n sh -c "$REPO" -e HOME="$RUN" -e PATH="$PATH" \
+  # Empty GH_APP_PROFILE: a value left in the tmux server env would change the "default" profile.
+  tmux new-window -d -t "$S" -n sh -c "$REPO" -e HOME="$RUN" -e PATH="$PATH" -e GH_APP_PROFILE= \
     "exec env PS1='gain-vfy\$ ' BASH_SILENCE_DEPRECATION_WARNING=1 bash --noprofile --norc"
   tmux pipe-pane -t "$S:sh" -o "cat >> '$EV/transcript.log'"
   for _ in $(seq 100); do grep -q 'agent listening on' "$EV/agent.log" 2>/dev/null && break; sleep 0.2; done

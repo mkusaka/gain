@@ -35,7 +35,7 @@ Shell state does not persist between Bash tool calls: keep `RUN` and pass it on 
 
 Prereqs: `bun` on PATH must be an official build (the agent refuses a runtime without hardened runtime or with `get-task-allow`), `tmux >= 3.2` (`new-session -e`), `node >= 24.2`, `bun install` done once.
 
-`$D launch` creates the fake HOME, starts tmux session `gain-vfy-XXXXXX` with window `agent` running `./gain.ts agent start` (node re-execs itself under bun) and window `sh` (a clean bash with `HOME=$RUN`, cwd = repo). Ready = `gain: agent listening on <RUN>/.local/share/gain/agent.sock (locked)` in `agent.log`; launch waits for it and fails with the log otherwise. The agent starts locked with no vault; the first `unlock` creates the vault (that is the empty-data-dir path).
+`$D launch` creates the fake HOME, starts tmux session `gain-vfy-XXXXXX` with window `agent` running `./gain.ts agent start` (node re-execs itself under bun) and window `sh` (a clean bash with `HOME=$RUN` and `GH_APP_PROFILE` emptied so the profile is `default`, cwd = repo). Ready = `gain: agent listening on <RUN>/.local/share/gain/agent.sock (locked)` in `agent.log`; launch waits for it and fails with the log otherwise. The agent starts locked with no vault; the first `unlock` creates the vault (that is the empty-data-dir path).
 
 ## Doctor
 

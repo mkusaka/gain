@@ -22,7 +22,7 @@ Maintained source for verifying gain's user-facing behavior. Read this index, th
 
 ## Features
 
-- [Agent lifecycle](./agent-lifecycle.md): start, first unlock creates the vault, status, lock, stop, and the errors other commands give when locked/not running.
+- [Agent lifecycle](./agent-lifecycle.md): start, first unlock creates the vault, status, lock, reset, stop, and the errors other commands give when locked/not running.
 - [Setup a profile](./setup.md): verify-before-save; a failing setup saves nothing.
 - [gh passthrough and token](./gh-and-token.md): `gain <gh args>`, `gain token --min-ttl`, `gain revoke`, `--profile`/`GH_APP_PROFILE`.
 - [Profiles](./profiles.md): `profile list`, `profile remove`.
