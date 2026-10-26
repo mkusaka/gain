@@ -35,7 +35,7 @@ gain token                                  # raw token, only for non-gh tools (
 | `profile "x" not configured`                   | Ask the user to run `setup` for that profile.                                                     |
 | `the agent is not running`                     | Ask the user to run `gain agent install` (starts it now and at login), then `gain agent unlock`.  |
 | `the agent is locked`                          | Ask the user to run `gain agent unlock` (needed once per login). Don't retry in a loop.           |
-| `allows debugger attach` / `needs Bun`         | The agent refuses an unsafe runtime. Ask the user to install the release binary (README Setup).   |
+| `allows debugger attach`                       | Unhardened binary, the agent refuses it. Ask the user to install the release (README Setup).      |
 | `token request failed: 401/404`                | Wrong Client ID / Installation ID or revoked key. Ask the user to re-run `setup`.                 |
 | `gh pr list` returns nothing                   | The App lacks **Issues: read**. Report it; don't assume the repo has no PRs.                      |
 | `Resource not accessible by integration` (403) | The App lacks that permission or isn't installed on the repo. Report which permission is missing. |
