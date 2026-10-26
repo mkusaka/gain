@@ -99,7 +99,7 @@ Go would have given the first, second and fourth points with fewer dependencies 
 The release is a single standalone binary signed by [release.yml](.github/workflows/release.yml) and installed as a Homebrew cask. Each choice keeps the guarantees above intact on the user's machine:
 
 - **Native binary**: users need no runtime, and the code the agent runs is exactly the signed file.
-- **Developer ID, hardened runtime, no entitlements**: no `get-task-allow`, so no debugger attach; no `allow-dyld-environment-variables` or `disable-library-validation`, so `DYLD_INSERT_LIBRARIES` in the agent's environment (e.g. added to the launchd plist) is ignored instead of loading code into it. The agent also refuses to start if its own signature has any of these. The release workflow proves all of it on the signed binary with `scripts/security-check.sh`.
+- **Developer ID, hardened runtime, no entitlements**: no `get-task-allow`, so no debugger attach; no `allow-dyld-environment-variables` or `disable-library-validation`, so `DYLD_INSERT_LIBRARIES` in the agent's environment (e.g. added to the launchd plist) is ignored instead of loading code into it. The agent also refuses to start if its own signature has any of these. See **Verified** above for how this is checked.
 - **Universal (arm64 + x86_64)**: one archive, so the cask has one `url`/`sha256`. Both slices are smoke-tested in CI (x86_64 through Rosetta).
 - **Notarized**: a cask download is quarantined, so Gatekeeper checks the notarization on first run.
 - **Cask, not formula**: Homebrew ships prebuilt binaries as casks. A formula install may rewrite a Mach-O and ad-hoc re-sign it, dropping the Developer ID signature; a cask copies the file as is. Its `zap` stanza stops the agent and removes the plist.
