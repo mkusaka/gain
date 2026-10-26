@@ -7,6 +7,8 @@
 #   5. its data directory is user-only and the vault holds no plaintext
 # 2 and 3 first run against an unprotected control program that must be readable/injectable,
 # so a runner that blocks debuggers or injection for everything can't pass by accident.
+# 2 and 3 need SIP: with it off (as on GitHub-hosted macOS runners) the kernel doesn't enforce the
+# hardened runtime, so they are skipped with a warning; run this on a Mac with SIP on.
 # Usage: scripts/security-check.sh path/to/gain   (CI: every build; release.yml: the signed binary)
 set -euo pipefail
 GAIN=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
@@ -24,6 +26,13 @@ codesign -dv --entitlements - "$GAIN" >"$T/sig" 2>&1
 grep -Eq 'flags=0x[0-9a-f]+\([^)]*runtime' "$T/sig" || fail "no hardened runtime: $(cat "$T/sig")"
 if grep -q 'com.apple.security' "$T/sig"; then fail "unexpected entitlements: $(cat "$T/sig")"; fi
 ok "hardened runtime, no entitlements"
+
+SIP=1
+if ! csrutil status | grep -q 'status: enabled'; then
+  SIP=
+  msg="SIP is off here ($(csrutil status)), so the hardened runtime isn't enforced: skipping the lldb and DYLD_INSERT_LIBRARIES checks"
+  if [[ -n ${GITHUB_ACTIONS:-} ]]; then echo "::warning::$msg"; else echo "skip: $msg"; fi
+fi
 
 # Controls: ad-hoc linker-signed like any unprotected native binary (ghtkn's release, a plain cargo build).
 cat >"$T/control.c" <<'EOF'
@@ -50,15 +59,6 @@ EOF
 cc -o "$T/control" "$T/control.c"
 cc -dynamiclib -o "$T/probe.dylib" "$T/probe.c"
 
-# 2. Debugger.
-"$T/control" >"$T/addr" &
-CONTROL=$!
-for _ in $(seq 50); do [[ -s $T/addr ]] && break; sleep 0.1; done
-lldb --batch -p "$CONTROL" -o "memory read -f s $(cat "$T/addr")" >"$T/lldb-control" 2>&1 || true
-kill "$CONTROL" 2>/dev/null || true
-grep -q CONTROL-SECRET "$T/lldb-control" || fail "control: lldb could not read an unprotected process, so this check proves nothing: $(cat "$T/lldb-control")"
-ok "control: lldb reads an unprotected process"
-
 mkdir -p "$T/home"
 HOME=$T/home "$GAIN" agent start 2>"$T/agent.log" &
 AGENT=$!
@@ -67,18 +67,29 @@ for _ in $(seq 50); do [[ -S $SOCK ]] && break; sleep 0.1; done
 [[ -S $SOCK ]] || fail "agent did not start: $(cat "$T/agent.log")"
 # Unlocked, so it holds the vault key (no tty here: talk to the socket directly).
 printf '{"cmd":"unlock","passphrase":"security-check-pass"}\n' | nc -U "$SOCK" | grep -q '"ok":true' || fail "unlock"
-lldb --batch -p "$AGENT" -o "process status" >"$T/lldb-gain" 2>&1 || true
-grep -q 'attach failed' "$T/lldb-gain" || fail "lldb attached to the agent: $(cat "$T/lldb-gain")"
-kill -0 "$AGENT" || fail "agent died"
-ok "lldb cannot attach to the agent"
 
-# 3. Library injection.
-DYLD_INSERT_LIBRARIES=$T/probe.dylib PROBE_OUT=$T/injected-control "$T/control" quit
-[[ -e $T/injected-control ]] || fail "control: DYLD_INSERT_LIBRARIES had no effect, so this check proves nothing"
-ok "control: DYLD_INSERT_LIBRARIES injects into an unprotected process"
-HOME=$T/home DYLD_INSERT_LIBRARIES=$T/probe.dylib PROBE_OUT=$T/injected-gain "$GAIN" agent status >/dev/null 2>&1
-[[ ! -e $T/injected-gain ]] || fail "DYLD_INSERT_LIBRARIES injected code into gain"
-ok "DYLD_INSERT_LIBRARIES is ignored"
+if [[ -n $SIP ]]; then
+  # 2. Debugger.
+  "$T/control" >"$T/addr" &
+  CONTROL=$!
+  for _ in $(seq 50); do [[ -s $T/addr ]] && break; sleep 0.1; done
+  lldb --batch -p "$CONTROL" -o "memory read -f s $(cat "$T/addr")" >"$T/lldb-control" 2>&1 || true
+  kill "$CONTROL" 2>/dev/null || true
+  grep -q CONTROL-SECRET "$T/lldb-control" || fail "control: lldb could not read an unprotected process, so this check proves nothing: $(cat "$T/lldb-control")"
+  ok "control: lldb reads an unprotected process"
+  lldb --batch -p "$AGENT" -o "process status" >"$T/lldb-gain" 2>&1 || true
+  grep -q 'attach failed' "$T/lldb-gain" || fail "lldb attached to the agent: $(cat "$T/lldb-gain")"
+  kill -0 "$AGENT" || fail "agent died"
+  ok "lldb cannot attach to the agent"
+
+  # 3. Library injection.
+  DYLD_INSERT_LIBRARIES=$T/probe.dylib PROBE_OUT=$T/injected-control "$T/control" quit
+  [[ -e $T/injected-control ]] || fail "control: DYLD_INSERT_LIBRARIES had no effect, so this check proves nothing"
+  ok "control: DYLD_INSERT_LIBRARIES injects into an unprotected process"
+  HOME=$T/home DYLD_INSERT_LIBRARIES=$T/probe.dylib PROBE_OUT=$T/injected-gain "$GAIN" agent status >/dev/null 2>&1
+  [[ ! -e $T/injected-gain ]] || fail "DYLD_INSERT_LIBRARIES injected code into gain"
+  ok "DYLD_INSERT_LIBRARIES is ignored"
+fi
 
 # 4. Self-check: the same binary without the hardened runtime must not run the agent.
 cp "$GAIN" "$T/unhardened"
