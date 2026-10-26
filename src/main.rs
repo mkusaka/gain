@@ -671,6 +671,20 @@ fn uid() -> u32 {
     unsafe { libc::getuid() }
 }
 
+// An npm install lives under node_modules, which switching Node versions (nvm, mise, ...) or
+// clearing npx's cache deletes, leaving launchd a missing file: run a copy next to the vault.
+// Replaced by rename, never overwritten in place, so a running copy keeps a valid signature.
+fn stable_copy(me: &Path, dir: &Path) -> R<PathBuf> {
+    let bin = dir.join("bin");
+    fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+    let (tmp, copy) = (bin.join("gain.tmp"), bin.join("gain"));
+    fs::copy(me, &tmp)
+        .and_then(|_| fs::rename(&tmp, &copy))
+        .map_err(|e| format!("copying {} to {}: {e}", me.display(), copy.display()))?;
+    Ok(copy)
+}
+
 fn install_agent() -> R<String> {
     launchctl(&["bootout", &format!("gui/{}/{LABEL}", uid())]); // replace an older install
     if call(json!({ "cmd": "status" })).is_ok() {
@@ -685,7 +699,9 @@ fn install_agent() -> R<String> {
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
-    let program = if !on_path.is_empty() && fs::canonicalize(&on_path).ok().as_ref() == Some(&me) {
+    let program = if me.components().any(|c| c.as_os_str() == "node_modules") {
+        stable_copy(&me, &dir())?.display().to_string()
+    } else if !on_path.is_empty() && fs::canonicalize(&on_path).ok().as_ref() == Some(&me) {
         on_path
     } else {
         me.display().to_string()
@@ -718,6 +734,7 @@ fn uninstall_agent() -> String {
     launchctl(&["bootout", &format!("gui/{}/{LABEL}", uid())]);
     let plist = plist_path();
     let _ = fs::remove_file(&plist);
+    let _ = fs::remove_dir_all(dir().join("bin")); // the copy an npm install runs (stable_copy)
     format!("removed {} and stopped the agent", plist.display())
 }
 
@@ -1310,6 +1327,29 @@ mod tests {
     fn launchd_plist_escapes_paths() {
         let xml = launchd_plist(&args(&["/a&b/gain", "/x<y"]), "/l.log");
         assert!(xml.contains("<string>/a&amp;b/gain</string><string>/x&lt;y</string>"));
+    }
+
+    #[test]
+    fn stable_copy_puts_an_executable_copy_next_to_the_vault() {
+        let dir = tmp_vault().parent().unwrap().to_path_buf();
+        let me = dir.join("node_modules/@mkusaka/gain/bin/gain");
+        fs::create_dir_all(me.parent().unwrap()).unwrap();
+        fs::write(&me, "binary v1").unwrap();
+        fs::set_permissions(&me, fs::Permissions::from_mode(0o755)).unwrap();
+        let data = dir.join("data");
+        let copy = stable_copy(&me, &data).unwrap();
+        assert_eq!(copy, data.join("bin/gain"));
+        fs::write(&me, "binary v2").unwrap();
+        stable_copy(&me, &data).unwrap(); // reinstall after an upgrade replaces it
+        assert_eq!(fs::read_to_string(&copy).unwrap(), "binary v2");
+        assert_eq!(
+            fs::metadata(&copy).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            fs::metadata(&data).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
     }
 
     #[test]

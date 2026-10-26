@@ -9,7 +9,7 @@ The App's private key never sits anywhere another process can read it. It lives 
 ## Setup
 
 ```sh
-brew install --cask mkusaka/tap/gain  # or a release tarball; from a clone see Development
+brew install --cask mkusaka/tap/gain  # or: npm install -g @mkusaka/gain; or a release tarball; from a clone see Development
 gain agent install             # start it now and at every login (or: gain agent start &)
 gain agent unlock              # first time: choose a passphrase (creates the vault)
 gain setup --client-id Iv23liXXXXXXXXXXXXXX --private-key-path /path/to/app.private-key.pem   # verifies by issuing a token, then saves
@@ -55,7 +55,7 @@ gain agent unlock      # once per login
 gain agent uninstall   # stop it and remove the plist
 ```
 
-The plist runs the absolute path of `gain` (`/opt/homebrew/bin/gain` for the cask) and logs to `~/Library/Logs/gain-agent.log`. It doesn't restart the agent (a restarted agent would be locked anyway); after a crash run `gain agent install` again. Remove gain with `brew uninstall --zap --cask gain` (or `gain agent uninstall` first), or launchd keeps trying a missing file at every login.
+The plist runs the absolute path of `gain` (`/opt/homebrew/bin/gain` for the cask; for npm, a copy in `~/.local/share/gain/bin/gain`, see [Distribution](#distribution)) and logs to `~/Library/Logs/gain-agent.log`. It doesn't restart the agent (a restarted agent would be locked anyway); after a crash run `gain agent install` again. Remove gain with `brew uninstall --zap --cask gain` (or `gain agent uninstall` first), or launchd keeps trying a missing file at every login.
 
 ## Design
 
@@ -104,6 +104,7 @@ The release is a single standalone binary signed by [release.yml](.github/workfl
 - **Notarized**: a cask download is quarantined, so Gatekeeper checks the notarization on first run.
 - **Cask, not formula**: Homebrew ships prebuilt binaries as casks. A formula install may rewrite a Mach-O and ad-hoc re-sign it, dropping the Developer ID signature; a cask copies the file as is. Its `zap` stanza stops the agent and removes the plist.
 - **Stable launchd path**: casks live in a versioned `Caskroom/gain/<version>/` directory, so `gain agent install` writes the `gain` found on `PATH` (`/opt/homebrew/bin/gain`) into the plist when it is the same binary.
+- **npm**: `@mkusaka/gain` carries the same signed universal binary as its `bin` (npm keeps the file as is, so the signature survives), published from the release workflow with trusted publishing and npm provenance. npm installs live under `node_modules`, which switching Node versions (nvm, mise, ...) deletes, so `gain agent install` copies the binary to `~/.local/share/gain/bin/gain` and launchd runs that; after upgrading, `gain agent install` again refreshes the copy.
 - **Provenance**: archives carry a GitHub build attestation; verify with `gh attestation verify gain-*.tar.gz -R mkusaka/gain`. The build runs without a build cache, so a poisoned cache can't end up in the signed binary.
 
 - **Upgrades don't stop the agent**: stopping it would lock it, and restarting from a cask hook isn't possible (Homebrew runs install steps in a sandbox that can't `launchctl bootstrap`). So `brew upgrade` leaves the agent running, still unlocked, on the old binary; it switches to the new one at the next login, or right away with `gain agent install` + `gain agent unlock`. `gain agent status` prints the agent's version and says so when it differs from the installed gain.
@@ -172,4 +173,4 @@ scripts/security-check.sh target/release/gain   # after the codesign above; need
 
 CI can't run the `lldb` and `DYLD_INSERT_LIBRARIES` checks (SIP is off on GitHub's runners), so run `scripts/security-check.sh` locally before tagging a release, ideally on the binary of a manual release run (`gh workflow run Release`, then download its archive).
 
-The toolchain is pinned in `rust-toolchain.toml`. Releases: push a `vX.Y.Z` tag. [release.yml](.github/workflows/release.yml) builds the universal binary, signs, runs the security check, notarizes, attests, publishes the GitHub release and bumps `Casks/gain.rb` in `mkusaka/homebrew-tap` (see [Distribution](#distribution)). Run it manually (`gh workflow run Release`) to validate signing and notarization without publishing. It needs these secrets in the `release` environment: `APPLE_DEVELOPER_ID_P12_BASE64`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_APP_STORE_CONNECT_API_KEY_BASE64`, `APPLE_APP_STORE_CONNECT_ISSUER_ID`, `APPLE_APP_STORE_CONNECT_KEY_ID`, `HOMEBREW_TAP_TOKEN`.
+The toolchain is pinned in `rust-toolchain.toml`. Releases: push a `vX.Y.Z` tag. [release.yml](.github/workflows/release.yml) builds the universal binary, signs, runs the security check, notarizes, attests, publishes the GitHub release and the npm package, and bumps `Casks/gain.rb` in `mkusaka/homebrew-tap` (see [Distribution](#distribution)). npm publishing uses trusted publishing: `@mkusaka/gain` on npmjs.com must list this repository's `release.yml` (environment `release`) as its trusted publisher. Run it manually (`gh workflow run Release`) to validate signing and notarization without publishing. It needs these secrets in the `release` environment: `APPLE_DEVELOPER_ID_P12_BASE64`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_APP_STORE_CONNECT_API_KEY_BASE64`, `APPLE_APP_STORE_CONNECT_ISSUER_ID`, `APPLE_APP_STORE_CONNECT_KEY_ID`, `HOMEBREW_TAP_TOKEN`.
