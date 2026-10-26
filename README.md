@@ -92,7 +92,7 @@ What Rust doesn't change: the hardened runtime and the signature are still what 
 
 Go would have given the first, second and fourth points with fewer dependencies (its standard library covers HTTP, TLS and RSA). Rust was chosen for the third, and the dependencies are kept small and pinned: crypto from [aws-lc-rs](https://github.com/aws/aws-lc-rs) (AES-256-GCM, RSA signing, randomness), scrypt from RustCrypto, HTTPS through Apple's Security.framework with the system trust store (`ureq` + `native-tls`), versions locked in `Cargo.lock` and checked by `cargo audit` in CI.
 
-**Verified in CI.** [`scripts/security-check.sh`](scripts/security-check.sh) runs on every CI build (ad-hoc signed) and on the Developer ID signed release binary before it is notarized. It checks the hardened runtime with no entitlements, that `lldb` can't attach to a running, unlocked agent, that `DYLD_INSERT_LIBRARIES` is ignored, that the agent refuses to start from a copy re-signed without the hardened runtime, and that the data directory is 0700 and the vault 0600 and sealed. The `lldb` and `DYLD_INSERT_LIBRARIES` checks first succeed against an unprotected control program, so a runner that blocks them for everything can't pass by accident.
+**Verified.** [`scripts/security-check.sh`](scripts/security-check.sh) checks the hardened runtime with no entitlements, that `lldb` can't attach to a running, unlocked agent, that `DYLD_INSERT_LIBRARIES` is ignored, that the agent refuses to start from a copy re-signed without the hardened runtime, and that the data directory is 0700 and the vault 0600 and sealed. The `lldb` and `DYLD_INSERT_LIBRARIES` checks first succeed against an unprotected control program, so a machine that blocks them for everything can't pass by accident. They need SIP: the kernel enforces the hardened runtime only with SIP on, and GitHub's macOS runners run with SIP off. So CI (macOS 15 and 26, ad-hoc signed) and the release workflow (the Developer ID signed binary) run the signature, self-check and file checks and skip those two with a warning; run the script on a Mac with SIP on before tagging a release (see [Development](#development)).
 
 ### Distribution
 
@@ -112,7 +112,7 @@ The release is a single standalone binary signed by [release.yml](.github/workfl
 
 - Protected: the private key. Malware running as you can no longer copy it and mint tokens indefinitely from elsewhere; it is never in Keychain, a plaintext file, process arguments or a socket response.
 - Not protected: while the agent is unlocked, any process running as you can connect to the socket and get a token (valid up to 1 hour), the same as ghtkn's agent. Other users can't (directory 0700). `gain agent lock` (e.g. from a screen-lock hook) closes that window.
-- Out of scope: root, a keylogger capturing the passphrase, or anything that can replace the `gain` binary or rewrite the launchd plist (e.g. to point it at another program) before the agent starts.
+- Out of scope: root, a Mac with SIP turned off (the hardened runtime isn't enforced there), a keylogger capturing the passphrase, or anything that can replace the `gain` binary or rewrite the launchd plist (e.g. to point it at another program) before the agent starts.
 
 ## Profiles (multiple Apps)
 
@@ -167,7 +167,9 @@ target/release/gain agent start
 cargo fmt
 cargo clippy --all-targets -- -D warnings
 cargo nextest run                        # includes opening a vault sealed by 0.4
-scripts/security-check.sh target/release/gain   # after the codesign above
+scripts/security-check.sh target/release/gain   # after the codesign above; needs SIP on
 ```
+
+CI can't run the `lldb` and `DYLD_INSERT_LIBRARIES` checks (SIP is off on GitHub's runners), so run `scripts/security-check.sh` locally before tagging a release, ideally on the binary of a manual release run (`gh workflow run Release`, then download its archive).
 
 The toolchain is pinned in `rust-toolchain.toml`. Releases: push a `vX.Y.Z` tag. [release.yml](.github/workflows/release.yml) builds the universal binary, signs, runs the security check, notarizes, attests, publishes the GitHub release and bumps `Casks/gain.rb` in `mkusaka/homebrew-tap` (see [Distribution](#distribution)). Run it manually (`gh workflow run Release`) to validate signing and notarization without publishing. It needs these secrets in the `release` environment: `APPLE_DEVELOPER_ID_P12_BASE64`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_APP_STORE_CONNECT_API_KEY_BASE64`, `APPLE_APP_STORE_CONNECT_ISSUER_ID`, `APPLE_APP_STORE_CONNECT_KEY_ID`, `HOMEBREW_TAP_TOKEN`.

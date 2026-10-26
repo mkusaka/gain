@@ -30,8 +30,8 @@ jobs:
       - run: cargo nextest run --locked
       - run: cargo audit
       # The protections README "Why Rust" relies on, on an ad-hoc signed build (release.yml repeats
-      # this on the Developer ID signed binary). Developer tools on, so only the hardened runtime
-      # can be what stops lldb.
+      # this on the Developer ID signed binary). SIP is off on these runners, so the lldb and
+      # DYLD_INSERT_LIBRARIES checks are skipped with a warning; run them locally (README).
       - name: Security check
         run: |
           cargo build --locked

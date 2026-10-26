@@ -98,7 +98,8 @@ jobs:
           strings build/gain | grep -qF "$VERSION" # GAIN_VERSION took effect
           # Smoke test the x86_64 slice through Rosetta: parse args and reach for the socket.
           arch -x86_64 build/gain agent status 2>&1 | grep -q "not running"
-      # The protections README "Why Rust" relies on, proven on the binary we ship.
+      # The protections README "Why Rust" relies on, on the binary we ship (lldb/DYLD checks need
+      # SIP, which is off on these runners: run the script locally before tagging, README).
       - name: Security check
         run: |
           sudo DevToolsSecurity -enable
