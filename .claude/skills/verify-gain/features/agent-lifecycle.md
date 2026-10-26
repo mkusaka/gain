@@ -22,17 +22,17 @@ Preconditions:
 
 - Fresh run, doctor shows status `locked`, no vault.
 
-- **Too short.** `$D cmd $RUN './gain.ts agent unlock' 'min 12 chars'`, `$D type $RUN 'short'`, `$D wait $RUN '\[exit='` → `gain: passphrase too short`, `[exit=1]`, no `again:` prompt; `ls ~/.local/share/gain/vault` fails.
+- **Too short.** `$D cmd $RUN 'gain agent unlock' 'min 12 chars'`, `$D type $RUN 'short'`, `$D wait $RUN '\[exit='` → `gain: passphrase too short`, `[exit=1]`, no `again:` prompt; `ls ~/.local/share/gain/vault` fails.
 - **Mismatch.** Same, type `verify-pass-123`, `$D wait $RUN 'again:'`, type `verify-pass-999`, wait `'\[exit='` → `gain: passphrases don't match`, `[exit=1]`.
-- **New vault.** `$D cmd $RUN './gain.ts agent unlock' 'min 12 chars'`, `$D type $RUN 'verify-pass-123'`, `$D wait $RUN 'again:'`, `$D type $RUN 'verify-pass-123'`, `$D wait $RUN '\[exit='` → `gain: created <RUN>/.local/share/gain/vault and unlocked; if you forget the passphrase: gain agent reset`, `[exit=0]`.
-- **Already unlocked.** `$D cmd $RUN './gain.ts agent unlock'` → `gain: already unlocked`, `[exit=0]`, no prompt.
-- **Status.** `$D cmd $RUN './gain.ts agent status'` → `gain: unlocked`, `[exit=0]`.
+- **New vault.** `$D cmd $RUN 'gain agent unlock' 'min 12 chars'`, `$D type $RUN 'verify-pass-123'`, `$D wait $RUN 'again:'`, `$D type $RUN 'verify-pass-123'`, `$D wait $RUN '\[exit='` → `gain: created <RUN>/.local/share/gain/vault and unlocked; if you forget the passphrase: gain agent reset`, `[exit=0]`.
+- **Already unlocked.** `$D cmd $RUN 'gain agent unlock'` → `gain: already unlocked`, `[exit=0]`, no prompt.
+- **Status.** `$D cmd $RUN 'gain agent status'` → `gain: unlocked`, `[exit=0]`.
 - **Vault on disk.** `$D cmd $RUN 'stat -f "%Sp" ~/.local/share/gain/vault'` → `-rw-------`.
-- **Lock.** `$D cmd $RUN './gain.ts agent lock'` → `gain: agent locked`; then `./gain.ts pr list -R cli/cli` and `./gain.ts profile list` → `gain: the agent is locked; run: gain agent unlock`, `[exit=1]`.
-- **Wrong, then right passphrase.** `$D cmd $RUN './gain.ts agent unlock' '^gain passphrase:'`, `$D type $RUN 'wrong-pass-0000'`, wait `'\[exit='` → `gain: wrong passphrase`, `[exit=1]`; repeat with `verify-pass-123` → `gain: unlocked`, `[exit=0]`.
-- **Reset abort.** `$D cmd $RUN './gain.ts agent reset' 'to confirm:'`, `$D type $RUN 'no'`, wait `'\[exit='` → `gain: aborted`, `[exit=1]`; status still `unlocked`.
-- **Reset.** Same with `reset` → `gain: deleted the vault. Next: gain agent unlock (new passphrase), then gain setup with a new private key per profile`, `[exit=0]`; status → `gain: locked` (agent still up); `ls` of the vault fails; `./gain.ts agent reset` again → `gain: no vault; nothing to reset`, `[exit=0]`.
-- **Stop.** `$D cmd $RUN './gain.ts agent stop'` → `gain: agent stopped`; `./gain.ts agent status` → `gain: the agent is not running; start it with: gain agent start`, `[exit=1]`. Doctor now shows listener `NONE`.
+- **Lock.** `$D cmd $RUN 'gain agent lock'` → `gain: agent locked`; then `gain pr list -R cli/cli` and `gain profile list` → `gain: the agent is locked; run: gain agent unlock`, `[exit=1]`.
+- **Wrong, then right passphrase.** `$D cmd $RUN 'gain agent unlock' '^gain passphrase:'`, `$D type $RUN 'wrong-pass-0000'`, wait `'\[exit='` → `gain: wrong passphrase`, `[exit=1]`; repeat with `verify-pass-123` → `gain: unlocked`, `[exit=0]`.
+- **Reset abort.** `$D cmd $RUN 'gain agent reset' 'to confirm:'`, `$D type $RUN 'no'`, wait `'\[exit='` → `gain: aborted`, `[exit=1]`; status still `unlocked`.
+- **Reset.** Same with `reset` → `gain: deleted the vault. Next: gain agent unlock (new passphrase), then gain setup with a new private key per profile`, `[exit=0]`; status → `gain: locked` (agent still up); `ls` of the vault fails; `gain agent reset` again → `gain: no vault; nothing to reset`, `[exit=0]`.
+- **Stop.** `$D cmd $RUN 'gain agent stop'` → `gain: agent stopped`; `gain agent status` → `gain: the agent is not running; start it with: gain agent start`, `[exit=1]`. Doctor now shows listener `NONE`.
 - **Proof.** `$D snap $RUN agent-lifecycle`.
 
 ## Gotchas

@@ -1,6 +1,6 @@
 # gain
 
-Run `gh` with a GitHub App installation token. macOS only. One TypeScript file (argument parsing by [Optique](https://optique.dev)), released as a standalone binary built with [Bun](https://bun.sh) and signed with Developer ID (hardened runtime, notarized).
+Run `gh` with a GitHub App installation token. macOS only. One Rust file, released as a universal binary signed with Developer ID (hardened runtime, no entitlements, notarized). See [Why Rust](#why-rust) for why it moved from TypeScript/Bun.
 
 **0.4 is a breaking change**: keys moved from the Keychain to an encrypted vault held by `gain agent`. See [Upgrading from 0.3](#upgrading-from-03-keychain).
 
@@ -45,7 +45,7 @@ gain agent stop
 gain agent reset   # forgot the passphrase: delete the vault (asks you to type "reset")
 ```
 
-The agent is not started automatically: run `gain agent start` yourself or `gain agent install` (below). Either way it starts locked. Without a running, unlocked agent no command can get a token; tokens handed out earlier stay valid until they expire (at most 1 hour). The agent refuses to run on a runtime that lets other processes attach a debugger (see [Why Bun](#why-bun)).
+The agent is not started automatically: run `gain agent start` yourself or `gain agent install` (below). Either way it starts locked. Without a running, unlocked agent no command can get a token; tokens handed out earlier stay valid until they expire (at most 1 hour). The agent refuses to run from a binary that lets other processes attach a debugger (see [Why Rust](#why-rust)).
 
 To start it at login, let gain register it with launchd:
 
@@ -55,7 +55,7 @@ gain agent unlock      # once per login
 gain agent uninstall   # stop it and remove the plist
 ```
 
-The plist runs the absolute path of `gain` (`/opt/homebrew/bin/gain` for the cask; `bun` plus `gain.js` from a clone) and logs to `~/Library/Logs/gain-agent.log`. It doesn't restart the agent (a restarted agent would be locked anyway); after a crash run `gain agent install` again. Remove gain with `brew uninstall --zap --cask gain` (or `gain agent uninstall` first), or launchd keeps trying a missing file at every login.
+The plist runs the absolute path of `gain` (`/opt/homebrew/bin/gain` for the cask) and logs to `~/Library/Logs/gain-agent.log`. It doesn't restart the agent (a restarted agent would be locked anyway); after a crash run `gain agent install` again. Remove gain with `brew uninstall --zap --cask gain` (or `gain agent uninstall` first), or launchd keeps trying a missing file at every login.
 
 ## Design
 
@@ -77,21 +77,34 @@ So the goal is: the key is never somewhere another process can read it, and only
 - **Agent**: after `gain agent unlock`, only the agent process holds the decrypted key, in memory. `gain agent lock` drops the key and cached tokens.
 - **Socket**: other commands ask the agent over `~/.local/share/gain/agent.sock` (directory 0700) and get a token back. No request returns the key. Tokens are cached in the agent's memory only, never on disk.
 
-### Why Bun
+### Why Rust
 
-"Only in the agent's memory" holds only if other processes can't read that memory. Node fails this: the official build is signed with the `get-task-allow` entitlement and Homebrew's has no hardened runtime, so `lldb -p <agent pid>` attaches without any prompt and can read the key (also, Node opens an inspector on `SIGUSR1` from any same-user process). Official Bun builds use the hardened runtime without `get-task-allow`, and `lldb` is refused. The agent checks this with `codesign` at startup and refuses to run otherwise.
+"Only in the agent's memory" holds only if other processes can't read that memory. On macOS that is decided by the binary's code signature, not by the language: a process without the hardened runtime, or signed with `get-task-allow`, lets any process running as you attach `lldb` without a prompt and read it. That includes native binaries: a plain `cargo build` or `go build` output is only linker-signed, without the hardened runtime, and `lldb -p` reads it.
+
+0.4 was TypeScript run by Bun, because Node can't be protected (the official build carries `get-task-allow`, Homebrew's has no hardened runtime, and Node opens an inspector on `SIGUSR1` from any same-user process). Bun can, but only with JIT entitlements, including `allow-unsigned-executable-memory` and `disable-executable-page-protection`, which switch off most of what the hardened runtime does for executable memory. From 0.5 gain is a native Rust binary:
+
+- **No entitlements.** Nothing is JIT-compiled, so the release is signed with the hardened runtime and no entitlements at all.
+- **No runtime on the side.** One binary. There is no interpreter on `PATH` and no script file next to it that the agent's security depends on, and no second "run from source" mode that is weaker than the release.
+- **Secrets are wiped.** The vault key, the private keys and the cached tokens are zeroized (`zeroize`) when the agent locks, a profile is removed or replaced, or a token is dropped. In TypeScript (and Go) they are garbage-collected strings that stay in memory until overwritten. Not airtight: temporary copies made while parsing JSON or inside the TLS and crypto libraries aren't wiped.
+- **Small.** About 7 MB (universal) instead of Bun's 188 MB, which also makes npm or mise practical as distribution channels later.
+
+What Rust doesn't change: the hardened runtime and the signature are still what keeps `lldb` out; any process running as you can still ask an unlocked agent for a token; the vault format and the socket protocol are the same as 0.4, so existing vaults open as they are and a 0.4 agent keeps working with a 0.5 client until it is restarted.
+
+Go would have given the first, second and fourth points with fewer dependencies (its standard library covers HTTP, TLS and RSA). Rust was chosen for the third, and the dependencies are kept small and pinned: crypto from [aws-lc-rs](https://github.com/aws/aws-lc-rs) (AES-256-GCM, RSA signing, randomness), scrypt from RustCrypto, HTTPS through Apple's Security.framework with the system trust store (`ureq` + `native-tls`), versions locked in `Cargo.lock` and checked by `cargo audit` in CI.
+
+**Verified in CI.** [`scripts/security-check.sh`](scripts/security-check.sh) runs on every CI build (ad-hoc signed) and on the Developer ID signed release binary before it is notarized. It checks the hardened runtime with no entitlements, that `lldb` can't attach to a running, unlocked agent, that `DYLD_INSERT_LIBRARIES` is ignored, that the agent refuses to start from a copy re-signed without the hardened runtime, and that the data directory is 0700 and the vault 0600 and sealed. The `lldb` and `DYLD_INSERT_LIBRARIES` checks first succeed against an unprotected control program, so a runner that blocks them for everything can't pass by accident.
 
 ### Distribution
 
 The release is a single standalone binary signed by [release.yml](.github/workflows/release.yml) and installed as a Homebrew cask. Each choice keeps the guarantees above intact on the user's machine:
 
-- **Standalone binary** (`bun build --compile`): the Bun runtime is embedded, so users need neither Node nor Bun, and the runtime the agent runs on is the one we signed rather than whatever is on `PATH`.
-- **Developer ID, hardened runtime, minimal entitlements**: signed with only the JIT entitlements Bun needs ([packaging/entitlements.plist](packaging/entitlements.plist)). No `get-task-allow`, so no debugger attach. Official Bun also carries `allow-dyld-environment-variables` and `disable-library-validation`, which let `DYLD_INSERT_LIBRARIES` in the agent's environment (e.g. added to the launchd plist) load arbitrary code into it; the release binary has neither, so dyld ignores those variables. The workflow fails if either entitlement or `get-task-allow` shows up.
+- **Native binary**: users need no runtime, and the code the agent runs is exactly the signed file.
+- **Developer ID, hardened runtime, no entitlements**: no `get-task-allow`, so no debugger attach; no `allow-dyld-environment-variables` or `disable-library-validation`, so `DYLD_INSERT_LIBRARIES` in the agent's environment (e.g. added to the launchd plist) is ignored instead of loading code into it. The agent also refuses to start if its own signature has any of these. The release workflow proves all of it on the signed binary with `scripts/security-check.sh`.
 - **Universal (arm64 + x86_64)**: one archive, so the cask has one `url`/`sha256`. Both slices are smoke-tested in CI (x86_64 through Rosetta).
 - **Notarized**: a cask download is quarantined, so Gatekeeper checks the notarization on first run.
 - **Cask, not formula**: Homebrew ships prebuilt binaries as casks. A formula install may rewrite a Mach-O and ad-hoc re-sign it, dropping the Developer ID signature; a cask copies the file as is. Its `zap` stanza stops the agent and removes the plist.
 - **Stable launchd path**: casks live in a versioned `Caskroom/gain/<version>/` directory, so `gain agent install` writes the `gain` found on `PATH` (`/opt/homebrew/bin/gain`) into the plist when it is the same binary.
-- **Provenance**: archives carry a GitHub build attestation; verify with `gh attestation verify gain-*.tar.gz -R mkusaka/gain`. The build runs without the setup-bun cache, so a poisoned cache can't end up in the signed binary.
+- **Provenance**: archives carry a GitHub build attestation; verify with `gh attestation verify gain-*.tar.gz -R mkusaka/gain`. The build runs without a build cache, so a poisoned cache can't end up in the signed binary.
 
 - **Upgrades don't stop the agent**: stopping it would lock it, and restarting from a cask hook isn't possible (Homebrew runs install steps in a sandbox that can't `launchctl bootstrap`). So `brew upgrade` leaves the agent running, still unlocked, on the old binary; it switches to the new one at the next login, or right away with `gain agent install` + `gain agent unlock`. `gain agent status` prints the agent's version and says so when it differs from the installed gain.
 
@@ -99,7 +112,7 @@ The release is a single standalone binary signed by [release.yml](.github/workfl
 
 - Protected: the private key. Malware running as you can no longer copy it and mint tokens indefinitely from elsewhere; it is never in Keychain, a plaintext file, process arguments or a socket response.
 - Not protected: while the agent is unlocked, any process running as you can connect to the socket and get a token (valid up to 1 hour), the same as ghtkn's agent. Other users can't (directory 0700). `gain agent lock` (e.g. from a screen-lock hook) closes that window.
-- Out of scope: root, a keylogger capturing the passphrase, or anything that can rewrite `gain.js`, your bun or the launchd plist (e.g. to add a debugger env var) before the agent starts.
+- Out of scope: root, a keylogger capturing the passphrase, or anything that can replace the `gain` binary or rewrite the launchd plist (e.g. to point it at another program) before the agent starts.
 
 ## Profiles (multiple Apps)
 
@@ -142,15 +155,19 @@ git clone https://github.com/org/private-repo
 
 ## Development
 
-From a clone, `npm link` installs `gain` running on Node; its agent then needs an official [Bun](https://bun.sh) on `PATH` (`gain agent start` under Node re-runs itself with `bun`).
-
-Releases: push a `vX.Y.Z` tag. [release.yml](.github/workflows/release.yml) builds the universal binary, signs, notarizes, attests, publishes the GitHub release and bumps `Casks/gain.rb` in `mkusaka/homebrew-tap` (see [Distribution](#distribution)). Run it manually (`gh workflow run Release`) to validate signing and notarization without publishing. It needs these secrets in the `release` environment: `APPLE_DEVELOPER_ID_P12_BASE64`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_APP_STORE_CONNECT_API_KEY_BASE64`, `APPLE_APP_STORE_CONNECT_ISSUER_ID`, `APPLE_APP_STORE_CONNECT_KEY_ID`, `HOMEBREW_TAP_TOKEN`.
+The agent refuses to run from a binary without the hardened runtime, and `cargo build` output only has the linker's ad-hoc signature, so sign what you build:
 
 ```sh
-bun install
-./gain.ts --version  # Node and Bun both run the .ts directly
-bun run fmt     # oxfmt (fmt:check in CI)
-bun run lint    # oxlint
-node --test     # or: bun test (CI runs both)
-bun run build   # dist/gain.js (types stripped by Node; Node won't run .ts inside node_modules)
+cargo build --release
+codesign -s - -f -o runtime target/release/gain   # ad-hoc signature with the hardened runtime
+target/release/gain agent start
 ```
+
+```sh
+cargo fmt
+cargo clippy --all-targets -- -D warnings
+cargo nextest run                        # includes opening a vault sealed by 0.4
+scripts/security-check.sh target/release/gain   # after the codesign above
+```
+
+The toolchain is pinned in `rust-toolchain.toml`. Releases: push a `vX.Y.Z` tag. [release.yml](.github/workflows/release.yml) builds the universal binary, signs, runs the security check, notarizes, attests, publishes the GitHub release and bumps `Casks/gain.rb` in `mkusaka/homebrew-tap` (see [Distribution](#distribution)). Run it manually (`gh workflow run Release`) to validate signing and notarization without publishing. It needs these secrets in the `release` environment: `APPLE_DEVELOPER_ID_P12_BASE64`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_APP_STORE_CONNECT_API_KEY_BASE64`, `APPLE_APP_STORE_CONNECT_ISSUER_ID`, `APPLE_APP_STORE_CONNECT_KEY_ID`, `HOMEBREW_TAP_TOKEN`.

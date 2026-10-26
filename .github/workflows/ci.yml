@@ -11,18 +11,30 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - run: rustup toolchain install # the one pinned in rust-toolchain.toml
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
-          node-version: 24
-      - run: bun install --frozen-lockfile
-      - run: bun run fmt:check
-      - run: bun run lint
-      - run: node --test
-      - run: bun test
-      - run: bun run build && node --check dist/gain.js
+          tool: cargo-nextest,cargo-audit
+      - run: cargo nextest run --locked
+      - run: cargo audit
+      # The protections README "Why Rust" relies on, on an ad-hoc signed build (release.yml repeats
+      # this on the Developer ID signed binary). Developer tools on, so only the hardened runtime
+      # can be what stops lldb.
+      - name: Security check
+        run: |
+          cargo build --locked
+          codesign -s - -f -o runtime target/debug/gain
+          sudo DevToolsSecurity -enable
+          scripts/security-check.sh target/debug/gain

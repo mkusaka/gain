@@ -20,13 +20,13 @@ Preconditions:
 
 - Agent unlocked. For real success, a configured profile (see setup.md); otherwise only the paths below are verifiable.
 
-- **Unconfigured profile.** `$D cmd $RUN './gain.ts pr list -R cli/cli'` → `gain: profile "default" not configured; run: gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE`, `[exit=1]`.
-- **Env profile.** `$D cmd $RUN 'GH_APP_PROFILE=work ./gain.ts api user'` → `gain: profile "work" not configured; ...`, `[exit=1]`.
-- **Bad name.** `$D cmd $RUN './gain.ts --profile ../x pr list'` → `gain: profile names must match [A-Za-z0-9_.-]+`, `[exit=1]`.
-- **Trailing --profile goes to gh.** `$D cmd $RUN './gain.ts pr list --profile work'` → names `"default"`, not `"work"`.
-- **min-ttl range.** `$D cmd $RUN './gain.ts token --min-ttl 61 2>&1 | grep Error'` → ``Error: `--min-ttl`: Expected a value less than or equal to 60, but got "61".`` (exit 1 unpiped).
-- **Revoke with nothing cached.** `$D cmd $RUN './gain.ts --profile nope revoke'` → `gain: no cached token`, `[exit=0]`.
-- **Real success** (only with a real profile): `$D cmd $RUN './gain.ts api rate_limit --jq .rate.limit'` → a number, `[exit=0]`. Never run bare `./gain.ts token` into the transcript; use `'./gain.ts token | wc -c'`.
+- **Unconfigured profile.** `$D cmd $RUN 'gain pr list -R cli/cli'` → `gain: profile "default" not configured; run: gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE`, `[exit=1]`.
+- **Env profile.** `$D cmd $RUN 'GH_APP_PROFILE=work gain api user'` → `gain: profile "work" not configured; ...`, `[exit=1]`.
+- **Bad name.** `$D cmd $RUN 'gain --profile ../x pr list'` → `gain: profile names must match [A-Za-z0-9_.-]+`, `[exit=1]`.
+- **Trailing --profile goes to gh.** `$D cmd $RUN 'gain pr list --profile work'` → names `"default"`, not `"work"`.
+- **min-ttl range.** `$D cmd $RUN 'gain token --min-ttl 61'` → `gain: --min-ttl must be 0-60 minutes, got "61"`, `[exit=1]`.
+- **Revoke with nothing cached.** `$D cmd $RUN 'gain --profile nope revoke'` → `gain: no cached token`, `[exit=0]`.
+- **Real success** (only with a real profile): `$D cmd $RUN 'gain api rate_limit --jq .rate.limit'` → a number, `[exit=0]`. Never run bare `gain token` into the transcript; use `'gain token | wc -c'`.
 - **Proof.** `$D snap $RUN gh-and-token`.
 
 ## Gotchas

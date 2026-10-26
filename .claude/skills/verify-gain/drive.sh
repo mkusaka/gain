@@ -23,7 +23,8 @@ fi
 S=$(basename "$RUN" | tr . -)  # tmux reads "." in a target as a pane separator
 EV=$EVROOT/$S
 SOCK=$RUN/.local/share/gain/agent.sock
-gain() { HOME=$RUN "$REPO/gain.ts" "$@"; }
+GAIN=$REPO/target/debug/gain
+gain() { HOME=$RUN "$GAIN" "$@"; }
 
 since_last_cmd() { # screen text from the latest `cmd` line on, so old output can't satisfy a wait
   local n; n=$(cat "$RUN/.n" 2>/dev/null || echo 0)
@@ -43,11 +44,15 @@ wait_for() { # wait_for REGEX [seconds]
 case $op in
 launch)
   mkdir -p "$EV"
+  # The agent refuses a binary without the hardened runtime; cargo's output is only linker-signed.
+  (cd "$REPO" && cargo build -q) && codesign -s - -f -o runtime "$GAIN" 2>/dev/null
   tmux new-session -d -s "$S" -n agent -x 200 -y 50 -c "$REPO" -e HOME="$RUN" -e PATH="$PATH" \
-    "exec ./gain.ts agent start 2>>'$EV/agent.log'"
+    "exec '$GAIN' agent start 2>>'$EV/agent.log'"
   # Empty GH_APP_PROFILE: a value left in the tmux server env would change the "default" profile.
-  tmux new-window -d -t "$S" -n sh -c "$REPO" -e HOME="$RUN" -e PATH="$PATH" -e GH_APP_PROFILE= \
-    "exec env PS1='gain-vfy\$ ' BASH_SILENCE_DEPRECATION_WARNING=1 bash --noprofile --norc"
+  # This checkout's gain first on PATH, so `gain ...` in the shell never reaches an installed one.
+  # (set by env in the command: a PATH passed with tmux -e did not reach the window's shell)
+  tmux new-window -d -t "$S" -n sh -c "$REPO" -e HOME="$RUN" -e GH_APP_PROFILE= \
+    "exec env PATH='$REPO/target/debug:$PATH' PS1='gain-vfy\$ ' BASH_SILENCE_DEPRECATION_WARNING=1 bash --noprofile --norc"
   tmux pipe-pane -t "$S:sh" -o "cat >> '$EV/transcript.log'"
   for _ in $(seq 100); do grep -q 'agent listening on' "$EV/agent.log" 2>/dev/null && break; sleep 0.2; done
   grep -q 'agent listening on' "$EV/agent.log" || { cat "$EV/agent.log" >&2; exit 1; }

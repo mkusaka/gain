@@ -18,11 +18,11 @@ Preconditions:
 
 - github.com without profile: agent unlocked. Other-host and no-op steps: none; run them after `agent stop` to prove no agent call. `cred-github` success: a real configured profile.
 
-- **github.com without profile.** `$D cmd $RUN 'printf "protocol=https\nhost=github.com\n\n" | ./gain.ts credential get'` → `gain: profile "default" not configured; ...`, `[exit=1]`.
-- **Stop the agent.** `$D cmd $RUN './gain.ts agent stop'`.
-- **Other host.** `$D cmd $RUN 'printf "protocol=https\nhost=gitlab.com\n\n" | ./gain.ts credential get | wc -c'` → `0`.
+- **github.com without profile.** `$D cmd $RUN 'printf "protocol=https\nhost=github.com\n\n" | gain credential get'` → `gain: profile "default" not configured; ...`, `[exit=1]`.
+- **Stop the agent.** `$D cmd $RUN 'gain agent stop'`.
+- **Other host.** `$D cmd $RUN 'printf "protocol=https\nhost=gitlab.com\n\n" | gain credential get | wc -c'` → `0`.
 - **Lookalike host.** same with `host=github.com.evil.example` → `0`.
-- **No-ops.** `$D cmd $RUN './gain.ts credential store </dev/null | wc -c; ./gain.ts credential erase </dev/null | wc -c'` → `0`, `0`.
+- **No-ops.** `$D cmd $RUN 'gain credential store </dev/null | wc -c; gain credential erase </dev/null | wc -c'` → `0`, `0`.
 - **github.com, agent stopped.** same request as the first step → `gain: the agent is not running; start it with: gain agent start`, `[exit=1]` — while other hosts still answered empty, so only github.com reaches the agent.
 - **github.com with real profile.** pipe through `| sed "s/password=.*/password=<redacted>/"` → `username=x-access-token`.
 - **Proof.** `$D snap $RUN credential-helper`.

@@ -5,7 +5,7 @@ Maintained source for verifying gain's user-facing behavior. Read this index, th
 ## Baseline preconditions
 
 - A fresh run from `drive.sh launch`: isolated `HOME=/tmp/gain-vfy.XXXXXX`, agent listening and locked, no vault.
-- `drive.sh doctor $RUN` shows a listener `bun .../gain.ts agent start` and status `locked`.
+- `drive.sh doctor $RUN` shows a listener `<repo>/target/debug/gain agent start` and status `locked`.
 - Never drive the user's real agent (`~/.local/share/gain`), launchd, or Keychain.
 
 ## Driving conventions
