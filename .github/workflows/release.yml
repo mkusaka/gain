@@ -129,6 +129,14 @@ jobs:
             bin: { gain: "bin/gain" }, os: ["darwin"], cpu: ["arm64", "x64"]
           }' > npm/package.json
           npm pack --dry-run ./npm
+      # The cask lives in this repo (packaging/homebrew/gain.rb); the tap gets the filled-in file.
+      - name: Render the Homebrew cask
+        run: |
+          sha256=$(shasum -a 256 "gain-$VERSION-darwin-universal.tar.gz" | awk '{print $1}')
+          sed -e "s/^  version \".*\"/  version \"$VERSION\"/" -e "s/^  sha256 \".*\"/  sha256 \"$sha256\"/" \
+            packaging/homebrew/gain.rb > gain.rb
+          grep -qF "version \"$VERSION\"" gain.rb && grep -qF "sha256 \"$sha256\"" gain.rb
+          ruby -c gain.rb
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         if: env.PUBLISH == 'true'
         with:
@@ -145,12 +153,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          sha256=$(shasum -a 256 "gain-$VERSION-darwin-universal.tar.gz" | awk '{print $1}')
-          gh api repos/mkusaka/homebrew-tap/dispatches \
-            -f event_type=update-cask \
-            -f "client_payload[cask]=gain" \
-            -f "client_payload[version]=$VERSION" \
-            -f "client_payload[sha256]=$sha256"
+          current=$(gh api repos/mkusaka/homebrew-tap/contents/Casks/gain.rb --jq .sha)
+          gh api -X PUT repos/mkusaka/homebrew-tap/contents/Casks/gain.rb \
+            -f message="bump gain to $VERSION" -f content="$(base64 -i gain.rb)" -f sha="$current"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: env.PUBLISH == 'true'
         with:
