@@ -8,6 +8,11 @@ on:
       - "v*"
   workflow_dispatch:
 
+# Never cancel a release half way. "-caller": ci.yml, called from here, sees this github.workflow too.
+concurrency:
+  group: ${{ github.workflow }}-caller-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions: {}
 
 jobs:
@@ -142,6 +147,7 @@ jobs:
           npm pack --dry-run ./npm
       # The cask lives in this repo (packaging/homebrew/gain.rb); the tap gets the filled-in file.
       - name: Render the Homebrew cask
+        shell: bash
         run: |
           sha256=$(shasum -a 256 "gain-$VERSION-darwin-universal.tar.gz" | awk '{print $1}')
           sed -e "s/^  version \".*\"/  version \"$VERSION\"/" -e "s/^  sha256 \".*\"/  sha256 \"$sha256\"/" \
