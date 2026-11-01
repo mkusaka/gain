@@ -176,7 +176,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: env.PUBLISH == 'true'
         with:
-          node-version: 24
+          node-version: 26
           package-manager-cache: false
       # Trusted publishing (OIDC, id-token: write): no npm token; provenance is attached.
       - name: Publish to npm
