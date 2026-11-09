@@ -11,7 +11,10 @@ cask "gain" do
 
   depends_on formula: "gh"
 
-  binary "gain"
+  app "Gain.app"
+  binary "#{appdir}/Gain.app/Contents/Helpers/gain"
+
+  uninstall quit: "com.github.mkusaka.gain"
 
   # Upgrades leave the agent running (unlocked, on the old binary) instead of stopping it; it
   # switches to the new binary at the next login or `gain agent install`. Zap removes the
@@ -20,16 +23,18 @@ cask "gain" do
       trash:     [
         "~/Library/LaunchAgents/com.github.mkusaka.gain.agent.plist",
         "~/Library/Logs/gain-agent.log",
+        "~/Library/Preferences/com.github.mkusaka.gain.plist",
       ]
 
   caveats <<~EOS
-    Start the agent now and at every login, then unlock it once per login:
+    Start the agent now and at every login, then choose a passphrase the first time.
+    After that, open Gain.app: it lives in the menu bar and asks for the passphrase at login.
       gain agent install
       gain agent unlock
     First time: add your GitHub App (https://github.com/mkusaka/gain#setup):
       gain setup --client-id ID --private-key-path FILE
     Upgrades keep the running agent; it moves to the new binary at the next login
-    (or run `gain agent install` and unlock again). `gain agent status` shows its version.
+    (or run `gain agent install` and unlock from Gain.app). `gain agent status` shows its version.
     Uninstall with `brew uninstall --zap gain` to also remove the LaunchAgent.
   EOS
 end
