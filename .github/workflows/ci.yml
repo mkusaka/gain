@@ -42,3 +42,8 @@ jobs:
           codesign -s - -f -o runtime target/debug/gain
           sudo DevToolsSecurity -enable
           scripts/security-check.sh target/debug/gain
+      - name: Build Gain.app
+        run: |
+          scripts/build-app.sh target/debug/gain build
+          codesign -s - -f -o runtime build/Gain.app
+          codesign --verify --strict --deep build/Gain.app

@@ -9,7 +9,7 @@ The App's private key lives only inside `gain agent`: in memory while unlocked, 
 ```sh
 brew install --cask mkusaka/tap/gain   # or: npm install -g @mkusaka/gain
 gain agent install                     # start the agent now and at every login
-gain agent unlock                      # once per login; the first time chooses a passphrase
+gain agent unlock                      # the first time chooses a passphrase; later logins ask in a dialog
 gain setup --client-id Iv23liXXXXXXXXXXXXXX --private-key-path app.private-key.pem
 rm app.private-key.pem                 # the vault is now the only copy
 ```
@@ -59,11 +59,15 @@ git config --global --add credential.https://github.com/org.helper '!gain --prof
 gain agent start | stop        # foreground; starts locked
 gain agent unlock | lock       # lock forgets the key and tokens
 gain agent status              # locked/unlocked and the agent's version
-gain agent install | uninstall # launchd: start at login
+gain agent install | uninstall # launchd: start at login, ask for the passphrase in a dialog
 gain agent reset               # forgot the passphrase: delete the vault
 ```
 
-Without a running, unlocked agent no command gets a token. Upgrades (`brew upgrade`, `npm update -g`) leave the running agent on the old version, still unlocked; it switches at the next login or with `gain agent install` + `gain agent unlock`. Before uninstalling, run `gain agent uninstall` (or `brew uninstall --zap --cask gain`).
+### Gain.app
+
+The cask also installs `Gain.app` (the CLI is inside it, `brew` links `gain` to it). It sits in the menu bar showing locked / unlocked / not running, with Unlock… and Lock, opens at login, and asks for the passphrase when it finds the agent locked; a wrong one shakes the field. It talks to the same socket as the CLI. It never creates the vault: choose the passphrase with `gain agent unlock` first. Without the app (npm), `gain agent install` has the agent ask in an `osascript` dialog instead.
+
+Without a running, unlocked agent no command gets a token. Upgrades (`brew upgrade`, `npm update -g`) leave the running agent on the old version, still unlocked; it switches at the next login or with `gain agent install` (which asks for the passphrase in a dialog). Before uninstalling, run `gain agent uninstall` (or `brew uninstall --zap --cask gain`).
 
 ## Security
 
@@ -79,13 +83,15 @@ Keeping the key "only in the agent's memory" depends on macOS refusing debuggers
 - one ~7 MB binary, no runtime or script next to it;
 - the vault key, private keys and tokens are zeroized when no longer needed.
 
+Gain.app is signed the same way (hardened runtime, no entitlements, no App Sandbox: that would hide the socket). The passphrase you type there passes through its memory on the way to the agent, as a Swift `String` that can't be zeroized; the CLI's `gain agent unlock` and the npm dialog keep it out of any long-lived process but the agent.
+
 Crypto comes from aws-lc-rs and RustCrypto's scrypt, HTTPS from Apple's Security.framework. The vault and socket protocol are unchanged from 0.4.
 
 [`scripts/security-check.sh`](scripts/security-check.sh) proves it on a built binary: no entitlements, `lldb` can't attach to the agent, `DYLD_INSERT_LIBRARIES` is ignored, an unhardened copy refuses to start, files are 0700/0600. CI and releases run it; GitHub's runners have SIP off, so the `lldb`/`DYLD` checks run only locally.
 
 ### Distribution
 
-One universal binary, Developer ID signed and notarized, shipped as a Homebrew **cask** (a formula could re-sign it) and as the npm package's `bin` (npm keeps the file as is). Archives carry a GitHub attestation (`gh attestation verify gain-*.tar.gz -R mkusaka/gain`), the npm package npm provenance. For launchd, `gain agent install` uses `/opt/homebrew/bin/gain` for the cask and a copy in `~/.local/share/gain/bin` for npm, since Node version switches delete npm installs.
+One universal binary, Developer ID signed and notarized, shipped as a Homebrew **cask** inside `Gain.app` (a formula could re-sign it) and as the npm package's `bin` (npm keeps the file as is). Archives carry a GitHub attestation (`gh attestation verify gain-*.tar.gz -R mkusaka/gain`), the npm package npm provenance. For launchd, `gain agent install` uses `/opt/homebrew/bin/gain` for the cask and a copy in `~/.local/share/gain/bin` for npm, since Node version switches delete npm installs.
 
 ## Development
 
@@ -94,6 +100,7 @@ cargo build --release
 codesign -s - -f -o runtime target/release/gain   # the agent refuses to run without the hardened runtime
 cargo fmt && cargo clippy --all-targets -- -D warnings && cargo nextest run
 scripts/security-check.sh target/release/gain     # needs SIP on; run before tagging
+scripts/build-app.sh target/release/gain build && codesign -s - -f -o runtime build/Gain.app   # Gain.app
 ```
 
 Release: push a `vX.Y.Z` tag; [release.yml](.github/workflows/release.yml) builds, signs, checks, notarizes and publishes to GitHub, npm (trusted publishing) and `mkusaka/homebrew-tap` (the cask is [packaging/homebrew/gain.rb](packaging/homebrew/gain.rb); edit it here, not in the tap). `gh workflow run Release` does everything but publishing. Secrets (environment `release`): `APPLE_DEVELOPER_ID_P12_BASE64`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_APP_STORE_CONNECT_API_KEY_BASE64`, `APPLE_APP_STORE_CONNECT_ISSUER_ID`, `APPLE_APP_STORE_CONNECT_KEY_ID`, `HOMEBREW_TAP_TOKEN`.

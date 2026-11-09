@@ -1,6 +1,6 @@
 // Run `gh` with a GitHub App installation token in GH_TOKEN. macOS only.
 // Private keys live only inside `gain agent`, encrypted at rest with a passphrase; clients get tokens.
-// Usage: gain agent start | unlock | lock | stop | status | install | uninstall (launchd) | reset
+// Usage: gain agent start [--dialog] | unlock | lock | stop | status | install | uninstall (launchd) | reset
 //        gain [--profile NAME] setup --client-id ID [--installation-id ID] --private-key-path FILE
 //        gain [--profile NAME] <gh args...>   e.g. gain --profile work pr list -R org/repo
 //        gain [--profile NAME] token [--min-ttl MINUTES]   print the token (for curl, scripts, ...)
@@ -533,7 +533,7 @@ fn check_hardened(info: &str) -> bool {
         .any(|e| info.contains(e))
 }
 
-fn start_agent() -> R<()> {
+fn start_agent(dialog: bool) -> R<()> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let sig = Command::new("codesign")
         .args(["-dv", "--entitlements", "-"])
@@ -581,6 +581,10 @@ fn start_agent() -> R<()> {
     }
     eprintln!("gain: agent listening on {} (locked)", sock.display());
     let agent = Arc::new(Mutex::new(Agent::new(vault_path())));
+    if dialog && vault_path().exists() {
+        let agent = agent.clone();
+        std::thread::spawn(move || unlock_by_dialog(&agent));
+    }
     for conn in listener.incoming().flatten() {
         let (agent, sock) = (agent.clone(), sock.clone());
         std::thread::spawn(move || serve(conn, &agent, &sock));
@@ -635,6 +639,46 @@ fn read_tty(prompt: &str, echo: bool) -> R<Zeroizing<String>> {
         return Err("no input from the terminal".into());
     }
     let s = Zeroizing::new(out.stdout);
+    Ok(Zeroizing::new(String::from_utf8_lossy(&s).into_owned()))
+}
+
+// Ask for the passphrase in a macOS dialog and unlock in-process, so it never crosses the socket.
+// Stops on "Later" (or any osascript failure); the vault is only created from a terminal (unlock_agent).
+fn unlock_by_dialog(agent: &Mutex<Agent>) {
+    let mut prompt = "Unlock the gain agent. Passphrase:".to_string();
+    loop {
+        let Ok(pass) = read_dialog(&prompt) else {
+            return;
+        };
+        match agent
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .unlock(&pass)
+        {
+            Ok(()) => return eprintln!("gain: unlocked from the login dialog"),
+            Err(e) => prompt = format!("{e}. Try again:"),
+        }
+    }
+}
+
+fn read_dialog(prompt: &str) -> R<Zeroizing<String>> {
+    let script = r#"on run argv
+activate
+text returned of (display dialog (item 1 of argv) with title "gain" default answer "" with hidden answer buttons {"Later", "Unlock"} default button "Unlock" cancel button "Later" with icon caution)
+end run"#;
+    let out = Command::new("/usr/bin/osascript")
+        .args(["-e", script, prompt])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    let mut s = Zeroizing::new(out.stdout);
+    if !out.status.success() {
+        return Err("dialog dismissed".into());
+    }
+    if s.last() == Some(&b'\n') {
+        s.pop(); // osascript ends its result with a newline
+    }
     Ok(Zeroizing::new(String::from_utf8_lossy(&s).into_owned()))
 }
 
@@ -709,7 +753,12 @@ fn install_agent() -> R<String> {
     let log = home().join("Library/Logs/gain-agent.log");
     let plist = plist_path();
     fs::create_dir_all(plist.parent().unwrap()).map_err(|e| e.to_string())?;
-    let args = [program, "agent".into(), "start".into()];
+    // Gain.app (the cask, which carries this binary inside it) asks for the passphrase itself;
+    // a standalone binary (npm) gets the osascript dialog.
+    let mut args = vec![program, "agent".into(), "start".into()];
+    if !me.to_string_lossy().contains(".app/Contents/") {
+        args.push("--dialog".into());
+    }
     fs::write(&plist, launchd_plist(&args, &log.display().to_string()))
         .map_err(|e| e.to_string())?;
     let r = launchctl(&[
@@ -724,7 +773,7 @@ fn install_agent() -> R<String> {
         ));
     }
     Ok(format!(
-        "installed {}; the agent starts at login (log: {}). Now run: gain agent unlock",
+        "installed {}; the agent starts at login and asks for the passphrase in a dialog (log: {}). First time: gain agent unlock",
         plist.display(),
         log.display()
     ))
@@ -910,6 +959,7 @@ fn opt_value(args: &[String], i: usize, name: &str) -> R<Option<(String, usize)>
 fn parse(args: &[String], env_profile: Option<String>) -> R<Cli> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     match a.as_slice() {
+        ["agent", "start", "--dialog"] => return Ok(Cli::Agent("start --dialog".into())),
         ["agent", op] if AGENT_OPS.contains(op) => return Ok(Cli::Agent(op.to_string())),
         ["agent", ..] => return Err(format!("usage: gain agent {}", AGENT_OPS.join("|"))),
         ["migrate-keychain"] => return Ok(Cli::MigrateKeychain),
@@ -999,7 +1049,8 @@ fn token_of(res: &Map<String, Value>) -> Zeroizing<String> {
 fn run(args: Vec<String>) -> R<()> {
     match parse(&args, std::env::var("GH_APP_PROFILE").ok())? {
         Cli::Agent(op) => match op.as_str() {
-            "start" => start_agent(),
+            "start" => start_agent(false),
+            "start --dialog" => start_agent(true),
             "unlock" => done(&unlock_agent()?),
             "install" => done(&install_agent()?),
             "uninstall" => done(&uninstall_agent()),
@@ -1437,6 +1488,11 @@ mod tests {
             Cli::Agent("unlock".into())
         );
         assert_eq!(p(&["agent", "reset"]).unwrap(), Cli::Agent("reset".into()));
+        assert_eq!(
+            p(&["agent", "start", "--dialog"]).unwrap(),
+            Cli::Agent("start --dialog".into())
+        );
+        assert!(p(&["agent", "unlock", "--dialog"]).is_err());
         assert!(p(&["agent", "dump"]).is_err());
         assert_eq!(
             p(&["setup", "--private-key-path", "k.pem", "--client-id", "Iv1"]).unwrap(),

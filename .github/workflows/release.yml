@@ -111,6 +111,15 @@ jobs:
           strings build/gain | grep -qF "$VERSION" # GAIN_VERSION took effect
           # Smoke test the x86_64 slice through Rosetta: parse args and reach for the socket.
           arch -x86_64 build/gain agent status 2>&1 | grep -q "not running"
+          # Gain.app carries the signed gain unchanged; sign the app around it (no --deep), same rules.
+          scripts/build-app.sh build/gain build "$VERSION"
+          codesign --force --options runtime --timestamp \
+            --keychain "$KEYCHAIN_PATH" --sign "Developer ID Application" build/Gain.app
+          codesign --verify --strict --deep --verbose=2 build/Gain.app
+          codesign -dv --entitlements - build/Gain.app >app-sig 2>&1
+          grep -Eq 'flags=0x[0-9a-f]+\([^)]*runtime' app-sig && ! grep -q com.apple.security app-sig
+          cmp build/gain build/Gain.app/Contents/Helpers/gain
+          lipo -archs build/Gain.app/Contents/MacOS/Gain | grep -q 'x86_64 arm64'
       # The protections README "Why Rust" relies on, on the binary we ship (lldb/DYLD checks need
       # SIP, which is off on these runners: run the script locally before tagging, README).
       - name: Security check
@@ -122,15 +131,16 @@ jobs:
           APPLE_APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APPLE_APP_STORE_CONNECT_ISSUER_ID }}
           APPLE_APP_STORE_CONNECT_KEY_ID: ${{ secrets.APPLE_APP_STORE_CONNECT_KEY_ID }}
         run: |
-          (cd build && zip -q ../notarize.zip gain)
+          ditto -c -k build notarize.zip # gain (for npm) and Gain.app
           xcrun notarytool submit notarize.zip \
             --key "$API_KEY_PATH" \
             --key-id "$APPLE_APP_STORE_CONNECT_KEY_ID" \
             --issuer "$APPLE_APP_STORE_CONNECT_ISSUER_ID" \
             --timeout 1h --wait
+          xcrun stapler staple build/Gain.app
       - name: Package
         run: |
-          tar -C build -czf "gain-${VERSION}-darwin-universal.tar.gz" gain
+          tar -C build -czf "gain-${VERSION}-darwin-universal.tar.gz" Gain.app
           shasum -a 256 gain-*.tar.gz
       # npm ships the same signed universal binary as its `bin` (README "Distribution").
       - name: Package for npm
