@@ -28,7 +28,7 @@ jobs:
       - run: rustup toolchain install # the one pinned in rust-toolchain.toml
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
-      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+      - uses: taiki-e/install-action@25f51f6b1bf4e18876107cece836f4f77ac17c8c # v2.90.7
         with:
           tool: cargo-nextest,cargo-audit
       - run: cargo nextest run --locked
